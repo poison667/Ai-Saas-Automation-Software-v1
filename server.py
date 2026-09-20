@@ -205,6 +205,26 @@ CREATE TABLE IF NOT EXISTS integrations (
   connected_at TEXT NOT NULL,
   last_sync TEXT
 );
+CREATE TABLE IF NOT EXISTS ab_tests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  post_id INTEGER NOT NULL,
+  content_a TEXT NOT NULL,
+  content_b TEXT NOT NULL,
+  metric_a REAL NOT NULL DEFAULT 0,
+  metric_b REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'running',
+  winner TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  integration_id INTEGER NOT NULL,
+  event TEXT NOT NULL,
+  payload TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS keywords (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
@@ -806,6 +826,22 @@ def seed_demo(conn):
     for key in ("slack", "canva"):
         conn.execute("INSERT INTO integrations (user_id, key, enabled, webhook_token, connected_at, last_sync) VALUES (?,?,?,?,?,?)",
                      (uid, key, 1, secrets.token_hex(8), day_iso(-20), now_iso(-3600 * 5)))
+    int_rows = conn.execute("SELECT * FROM integrations WHERE user_id=?", (uid,)).fetchall()
+    slack_id = next(r["id"] for r in int_rows if r["key"] == "slack")
+    canva_id = next(r["id"] for r in int_rows if r["key"] == "canva")
+    pub_post = conn.execute("SELECT id, content FROM posts WHERE user_id=? AND status='published' ORDER BY id LIMIT 1", (uid,)).fetchone()
+    sch_post = conn.execute("SELECT id, content FROM posts WHERE user_id=? AND status='scheduled' ORDER BY id LIMIT 1", (uid,)).fetchone()
+    if pub_post and sch_post:
+        conn.execute("INSERT INTO ab_tests (user_id, post_id, content_a, content_b, metric_a, metric_b, status, winner, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (uid, pub_post["id"], pub_post["content"], "✨ " + pub_post["content"][:120].strip(),
+                      4.6, 6.1, "completed", "B", day_iso(-6)))
+        conn.execute("INSERT INTO ab_tests (user_id, post_id, content_a, content_b, status, created_at) VALUES (?,?,?,?,?,?)",
+                     (uid, sch_post["id"], sch_post["content"],
+                      sch_post["content"][:90].strip() + " — don't miss this. Full details in the thread 🧵", "running", day_iso(-1)))
+    for ev, iid, ago in (("post.published", slack_id, -3600 * 30), ("test.ping", canva_id, -3600 * 26),
+                         ("post.approved", slack_id, -3600 * 9), ("post.published", canva_id, -3600 * 3)):
+        conn.execute("INSERT INTO webhook_events (user_id, integration_id, event, payload, created_at) VALUES (?,?,?,?,?)",
+                     (uid, iid, ev, '{"demo":true}', now_iso(ago)))
 
     # ---- social listening keywords ----
     kw_rng = random.Random(99)
@@ -1123,6 +1159,8 @@ async def update_post(id: int, request: Request, user=Depends(require_user)):
                         likes=?, comments=?, shares=?, reach=?, review_note=?, updated_at=? WHERE id=?""",
                      (d["content"], d["platforms"], d["status"], d["scheduled_at"], d.get("published_at"),
                       d["campaign_id"], d["likes"], d["comments"], d["shares"], d["reach"], review_note, now_iso(), id))
+        if body.get("status") == "published" and row["status"] != "published":
+            emit_webhooks(conn, user["id"], "post.published", {"post_id": id, "platforms": json.loads(d["platforms"] or "[]")})
         conn.commit()
         row = conn.execute("SELECT * FROM posts WHERE id=?", (id,)).fetchone()
     return post_dict(row)
@@ -1181,6 +1219,7 @@ async def approve_post(id: int, user=Depends(require_user)):
             conn.execute("UPDATE posts SET status='published', published_at=?, likes=?, reach=?, review_note='', updated_at=? WHERE id=?",
                          (now_iso(), likes, likes * random.randint(15, 30), now_iso(), id))
             msg = "Approved & published"
+        emit_webhooks(conn, user["id"], "post.approved", {"post_id": id, "result": msg})
         conn.commit()
         row = conn.execute("SELECT * FROM posts WHERE id=?", (id,)).fetchone()
     log_activity(user["id"], "post", f"You approved {row['author']}'s post")
@@ -1596,6 +1635,12 @@ async def export_posts_csv(user=Depends(require_user)):
 
 # ---- integrations
 
+def emit_webhooks(conn, user_id, event, payload):
+    rows = conn.execute("SELECT id, key FROM integrations WHERE user_id=? AND enabled=1", (user_id,)).fetchall()
+    for r in rows:
+        conn.execute("INSERT INTO webhook_events (user_id, integration_id, event, payload, created_at) VALUES (?,?,?,?,?)",
+                     (user_id, r["id"], event, json.dumps(payload), now_iso()))
+
 INTEGRATION_CATALOG = ["slack", "zapier", "canva", "gdrive", "stripe", "shopify"]
 
 @app.get("/api/integrations")
@@ -1647,9 +1692,89 @@ async def test_integration(id: int, user=Depends(require_user)):
     with closing(db()) as conn:
         row = own(conn, "integrations", id, user["id"])
         conn.execute("UPDATE integrations SET last_sync=? WHERE id=?", (now_iso(), id))
+        emit_webhooks(conn, user["id"], "test.ping", {"integration": row["key"], "source": "manual-test"})
         conn.commit()
     log_activity(user["id"], "account", f"Test event delivered to {row['key']} ✓")
     return {"ok": True, "key": row["key"]}
+
+@app.get("/api/webhook-events")
+async def webhook_events(user=Depends(require_user)):
+    await jitter(0.1, 0.25)
+    with closing(db()) as conn:
+        rows = conn.execute("""SELECT w.*, i.key AS integration_key FROM webhook_events w
+                               JOIN integrations i ON i.id = w.integration_id
+                               WHERE w.user_id=? ORDER BY datetime(w.created_at) DESC LIMIT 30""", (user["id"],)).fetchall()
+    return [dict(r) for r in rows]
+
+# ---- A/B experiments
+
+@app.get("/api/ab")
+async def list_ab(user=Depends(require_user)):
+    await jitter(0.1, 0.3)
+    with closing(db()) as conn:
+        rows = conn.execute("""SELECT a.*, p.content AS post_content, p.status AS post_status, p.platforms AS post_platforms
+                               FROM ab_tests a JOIN posts p ON p.id = a.post_id
+                               WHERE a.user_id=? ORDER BY datetime(a.created_at) DESC""", (user["id"],)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["platforms"] = json.loads(d.get("post_platforms") or "[]")
+        out.append(d)
+    return out
+
+@app.post("/api/ab")
+async def create_ab(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    content_b = (body.get("content_b") or "").strip()
+    if not content_b:
+        raise HTTPException(400, "Variant B content is required")
+    await asyncio.sleep(0.8)
+    with closing(db()) as conn:
+        post = own(conn, "posts", body.get("post_id"), user["id"])
+        if post["status"] not in ("draft", "scheduled"):
+            raise HTTPException(409, "Only draft or scheduled posts can run experiments")
+        if conn.execute("SELECT 1 FROM ab_tests WHERE post_id=? AND status='running'", (post["id"],)).fetchone():
+            raise HTTPException(409, "This post already has a running experiment")
+        cur = conn.execute("INSERT INTO ab_tests (user_id, post_id, content_a, content_b, created_at) VALUES (?,?,?,?,?)",
+                           (user["id"], post["id"], post["content"], content_b, now_iso()))
+        row = conn.execute("SELECT * FROM ab_tests WHERE id=?", (cur.lastrowid,)).fetchone()
+        conn.commit()
+    log_activity(user["id"], "post", "Started an A/B experiment on a post")
+    return dict(row)
+
+@app.post("/api/ab/{id}/decide")
+async def decide_ab(id: int, user=Depends(require_user)):
+    await asyncio.sleep(1.2)
+    rng = random.Random(id * 7919 + int(time.time() / 60))
+    with closing(db()) as conn:
+        row = own(conn, "ab_tests", id, user["id"])
+        if row["status"] != "running":
+            raise HTTPException(409, "Experiment already completed")
+        post = conn.execute("SELECT * FROM posts WHERE id=?", (row["post_id"],)).fetchone()
+        ma = round(rng.uniform(1.4, 6.8), 2)
+        mb = round(rng.uniform(1.4, 6.8), 2)
+        if abs(ma - mb) < 0.15:
+            mb = round(ma + 0.3, 2)
+        winner = "A" if ma >= mb else "B"
+        conn.execute("UPDATE ab_tests SET metric_a=?, metric_b=?, status='completed', winner=? WHERE id=?",
+                     (ma, mb, winner, id))
+        if winner == "B" and post and post["status"] in ("draft", "scheduled"):
+            # snapshot current content, then promote the winning variant
+            conn.execute("INSERT INTO post_versions (post_id, user_id, content, platforms, edited_by, created_at) VALUES (?,?,?,?,?,?)",
+                         (post["id"], user["id"], post["content"], post["platforms"], "A/B test", now_iso()))
+            conn.execute("UPDATE posts SET content=?, updated_at=? WHERE id=?", (row["content_b"], now_iso(), post["id"]))
+        conn.commit()
+        out = conn.execute("SELECT * FROM ab_tests WHERE id=?", (id,)).fetchone()
+    log_activity(user["id"], "post", f"A/B experiment completed — Variant {winner} won")
+    return dict(out)
+
+@app.delete("/api/ab/{id}")
+async def delete_ab(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "ab_tests", id, user["id"])
+        conn.execute("DELETE FROM ab_tests WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
 
 # ---- onboarding
 
@@ -1684,7 +1809,7 @@ async def reset_workspace(request: Request, user=Depends(require_user)):
     uid = user["id"]
     tables = ["accounts", "posts", "campaigns", "analytics", "templates", "generations", "activity",
               "conversations", "team_members", "media", "invoices", "competitors", "reports", "keywords",
-              "post_versions", "integrations"]
+              "post_versions", "integrations", "ab_tests", "webhook_events"]
     with closing(db()) as conn:
         for t in tables:
             conn.execute(f"DELETE FROM {t} WHERE user_id=?", (uid,))

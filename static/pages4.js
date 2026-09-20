@@ -48,8 +48,8 @@ function renderApprovals(posts) {
             ${platRow(p.platforms, 13)}
             <span class="spacer" style="flex:1"></span>
             <button class="btn ghost sm" data-act="edit">${icon("edit", 13)} Edit</button>
-            <button class="btn danger sm" data-act="reject">${icon("x", 13)} Send back</button>
-            <button class="btn primary sm" data-act="approve">${icon("check", 13)} Approve${p.scheduled_at ? " & schedule" : " & publish"}</button>
+            <button class="btn danger sm" data-act="reject" data-perm="reject">${icon("x", 13)} Send back</button>
+            <button class="btn primary sm" data-act="approve" data-perm="approve">${icon("check", 13)} Approve${p.scheduled_at ? " & schedule" : " & publish"}</button>
           </div>
         </div>
       </div>

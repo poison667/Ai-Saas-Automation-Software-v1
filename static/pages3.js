@@ -194,7 +194,7 @@ function renderConvDetail() {
       <textarea class="input" id="cd-text" placeholder="Write a reply as ${esc(state.user.workspace)}…"></textarea>
       <div style="display:flex;flex-direction:column;gap:7px">
         <button class="btn sm" id="cd-ai">${icon("sparkles", 13)} AI reply</button>
-        <button class="btn primary sm" id="cd-send">${icon("send", 13)} Send</button>
+        <button class="btn primary sm" id="cd-send" data-perm="reply">${icon("send", 13)} Send</button>
       </div>
     </div>` : `<p class="muted mt-16" style="font-size:12.5px">This conversation is archived.</p>`}
     <div class="divider"></div>
@@ -280,7 +280,7 @@ ROUTES.team = {
       <div class="page-head">
         <span class="muted" id="team-count"></span>
         <span class="spacer"></span>
-        <button class="btn primary sm" id="team-invite">${icon("plus", 14)} Invite teammate</button>
+        <button class="btn primary sm" id="team-invite" data-perm="team">${icon("plus", 14)} Invite teammate</button>
       </div>
       <div class="card" style="margin-bottom:16px">
         <div class="list-item" style="border:none;padding:4px 0">
@@ -414,7 +414,7 @@ ROUTES.media = {
         <span class="muted" id="media-count"></span>
         <span class="spacer"></span>
         <button class="btn sm" id="media-design">${icon("image", 14)} New design asset</button>
-        <button class="btn primary sm" id="media-upload-btn">${icon("plus", 14)} Upload</button>
+        <button class="btn primary sm" id="media-upload-btn" data-perm="create">${icon("plus", 14)} Upload</button>
         <input type="file" id="media-file" accept="image/*" style="display:none">
       </div>
       <div class="upload-zone mb-8" id="media-drop" style="margin-bottom:16px">
@@ -585,7 +585,7 @@ function drawBilling(b) {
           <div class="p-price">$${p.price}<span> /month</span></div>
           <div class="p-tag">${p.tagline}</div>
           <ul>${PLAN_FEATURES[name].map(f => `<li>${icon("check", 13)} ${f}</li>`).join("")}</ul>
-          <button class="btn ${b.plan === name ? "" : "primary"} block" data-plan="${name}" ${b.plan === name ? "disabled" : ""}>
+          <button class="btn ${b.plan === name ? "" : "primary"} block" data-perm="billing" data-plan="${name}" ${b.plan === name ? "disabled" : ""}>
             ${b.plan === name ? "Your current plan" : "Switch to " + name}
           </button>
         </div>`).join("")}
@@ -658,7 +658,7 @@ ROUTES.competitors = {
       <div class="page-head">
         <span class="muted" id="comp-count"></span>
         <span class="spacer"></span>
-        <button class="btn primary sm" id="comp-add">${icon("plus", 14)} Track a competitor</button>
+        <button class="btn primary sm" id="comp-add" data-perm="create">${icon("plus", 14)} Track a competitor</button>
       </div>
       <div class="card" style="margin-bottom:16px">
         <h3>Follower growth — you vs. them</h3>

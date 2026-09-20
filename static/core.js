@@ -116,6 +116,10 @@ const ICON_PATHS = {
   sun: '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
   moon: '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>',
   link: '<path d="M10 13a5 5 0 007.54.5l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.5l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>',
+  flask: '<path d="M9 3v6.5L4.2 18a2 2 0 001.8 3h12a2 2 0 001.8-3L15 9.5V3"/><line x1="8" y1="3" x2="16" y2="3"/><line x1="7" y1="15" x2="17" y2="15"/>',
+  gitBranch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/>',
+  helpCircle: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
 };
 function icon(name, size = 18, cls = "") {
   const p = ICON_PATHS[name] || "";
@@ -372,6 +376,7 @@ const NAV = [
   { id: "ideas", label: "Content Ideas", icon: "zap" },
   { id: "posts", label: "Posts", icon: "inbox" },
   { id: "approvals", label: "Approvals", icon: "check", badge: "approvals" },
+  { id: "experiments", label: "Experiments", icon: "flask" },
   { id: "calendar", label: "Calendar", icon: "calendar" },
   { id: "media", label: "Media Library", icon: "image" },
   { section: "Manage" },
@@ -418,10 +423,17 @@ function shellHTML(title, subtitle) {
         <button class="icon-btn hamburger" id="hamburger">${icon("menu", 19)}</button>
         <div><h1>${esc(title)}</h1>${subtitle ? `<div class="sub">${esc(subtitle)}</div>` : ""}</div>
         <div class="topbar-right">
+          <select id="role-preview" class="role-select" title="Preview as role">
+            <option value="owner">👑 Owner</option>
+            <option value="manager">🧭 Manager</option>
+            <option value="editor">✍️ Editor</option>
+            <option value="viewer">👁 Viewer</option>
+          </select>
+          <button class="icon-btn" id="tour-btn" title="Take the product tour">${icon("helpCircle", 17)}</button>
           <button class="icon-btn" id="palette-open" title="Search (Ctrl+K)">${icon("search", 17)}</button>
           <button class="icon-btn" id="theme-toggle" title="Toggle theme">${icon("sun", 17)}</button>
           <span class="credits-pill">${icon("zap", 13)} ${creditsLeft} credits</span>
-          <button class="btn primary sm" id="quick-new-post">${icon("plus", 14)} New post</button>
+          <button class="btn primary sm" id="quick-new-post" data-perm="create">${icon("plus", 14)} New post</button>
           <div class="dd">
             <button class="icon-btn" data-dd-trigger id="bell-btn" style="position:relative">${icon("bell", 18)}<span class="bell-dot" id="bell-dot" style="display:none"></span></button>
             <div class="dd-menu" style="width:340px" id="notif-menu"></div>
@@ -437,6 +449,7 @@ function shellHTML(title, subtitle) {
           </div>
         </div>
       </header>
+      <div class="role-banner" id="role-banner" style="display:none">${icon("eye", 15)} Previewing as <b id="role-banner-label">${ROLE_LABEL[state.rolePreview || "owner"]}</b> — read-only or limited actions. Change via the role selector above.</div>
       <main class="content" id="page"></main>
     </div>
   </div>`;
@@ -505,6 +518,16 @@ function bindShell() {
   const th = document.getElementById("theme-toggle");
   if (th) th.onclick = toggleTheme;
   applyTheme(preferredTheme());
+  const rp = document.getElementById("role-preview");
+  if (rp) {
+    const saved = (state.user && state.user.prefs && state.user.prefs.viewAs) || "owner";
+    state.rolePreview = saved;
+    rp.value = saved;
+    rp.onchange = () => setRolePreview(rp.value);
+  }
+  const tb = document.getElementById("tour-btn");
+  if (tb) tb.onclick = () => startTour(0);
+  setTimeout(applyRoleGuard, 0);
   const inst = document.getElementById("install-app-btn");
   if (inst) { inst.onclick = installApp; if (deferredInstallPrompt) inst.style.display = ""; }
   const doLogout = async () => {
@@ -850,6 +873,103 @@ function openPalette() {
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (state.user) openPalette(); }
 });
+
+/* ---------------- role preview ---------------- */
+const ROLE_PERMS = {
+  owner:  ["create","edit","delete","approve","reject","publish","reply","team","billing","reset","connect","export","generate","schedule"],
+  manager:["create","edit","delete","approve","reject","publish","reply","team","connect","export","generate","schedule"],
+  editor: ["create","edit","reply","connect","export","generate","schedule"],
+  viewer: [],
+};
+const ROLE_LABEL = { owner: "Owner", manager: "Manager", editor: "Editor", viewer: "Viewer" };
+function currentRole() { return state.rolePreview || "owner"; }
+function can(perm) { return (ROLE_PERMS[currentRole()] || []).includes(perm); }
+function roleBlocked(el) {
+  const perm = el.dataset.perm;
+  if (!perm) return;
+  const allowed = can(perm);
+  if (allowed) {
+    el.disabled = false; el.classList.remove("role-blocked");
+    if (el.dataset.origTitle !== undefined) el.title = el.dataset.origTitle;
+    return;
+  }
+  if (el.dataset.origTitle === undefined) el.dataset.origTitle = el.title || "";
+  el.disabled = true; el.classList.add("role-blocked");
+  el.title = `${ROLE_LABEL[currentRole()]} can’t ${perm} — switch role to change`;
+}
+function applyRoleGuard() {
+  document.querySelectorAll("[data-perm]").forEach(roleBlocked);
+  const banner = document.getElementById("role-banner");
+  if (banner) {
+    banner.style.display = currentRole() === "owner" ? "none" : "flex";
+    const lbl = document.getElementById("role-banner-label");
+    if (lbl) lbl.textContent = ROLE_LABEL[currentRole()];
+  }
+}
+new MutationObserver(() => applyRoleGuard()).observe(document.documentElement, { subtree: true, childList: true });
+
+function setRolePreview(r) {
+  state.rolePreview = r;
+  if (state.user) {
+    state.user.prefs = state.user.prefs || {};
+    state.user.prefs.viewAs = r;
+    api("/api/me", { method: "PATCH", body: { prefs: { viewAs: r } } }).catch(() => {});
+  }
+  const sel = document.getElementById("role-preview");
+  if (sel) sel.value = r;
+  applyRoleGuard();
+  if (r !== "owner") toast(`Previewing as ${ROLE_LABEL[r]} — some actions are locked`, { type: "info" });
+}
+
+/* ---------------- product tour ---------------- */
+const TOUR_STEPS = [
+  { nav: "dashboard", icon: "dashboard", title: "Your command center", body: "The Dashboard shows live stats, your publishing calendar at a glance, and recent activity. Everything important starts here." },
+  { nav: "generator", icon: "sparkles", title: "AI Generator", body: "Describe what you want and Lumina drafts platform-ready copy in seconds. It uses AI credits from your plan." },
+  { nav: "approvals", icon: "check", title: "Approvals", body: "Teammates submit posts for review. Approve to publish or schedule, or reject with feedback so they know what to fix." },
+  { nav: "experiments", icon: "flask", title: "Experiments", body: "Run A/B tests on post copy. Lumina splits the audience, measures engagement, and promotes the winning variant automatically." },
+  { nav: "listening", icon: "search", title: "Social Listening", body: "Track brand keywords across the social web. See volume, sentiment, and every mention in real time." },
+  { nav: "integrations", icon: "link", title: "Integrations", body: "Connect Slack, Zapier, Canva and more. Webhooks push live events out to the rest of your stack." },
+  { nav: "billing", icon: "file", title: "Billing", body: "Manage your plan, AI credits, and invoices. Upgrade any time — changes apply instantly." },
+];
+let tourState = null;
+function startTour(i = 0) {
+  if (i >= TOUR_STEPS.length) { endTour(true); return; }
+  const step = TOUR_STEPS[i];
+  tourState = i;
+  location.hash = "#/" + step.nav;
+  setTimeout(() => renderTourCard(step, i), 350);
+}
+function renderTourCard(step, i) {
+  endTourDom();
+  const isLast = i === TOUR_STEPS.length - 1;
+  const card = document.createElement("div");
+  card.className = "tour-card fade-in";
+  card.innerHTML = `
+    <div class="tour-head">${icon(step.icon, 18)} <b>${esc(step.title)}</b><span class="tour-count">${i + 1} / ${TOUR_STEPS.length}</span></div>
+    <p>${esc(step.body)}</p>
+    <div class="tour-actions">
+      <button class="btn sm ghost" id="tour-skip">Skip</button>
+      <span style="flex:1"></span>
+      ${i > 0 ? `<button class="btn sm" id="tour-back">${icon("chevronLeft", 13)} Back</button>` : ""}
+      <button class="btn sm primary" id="tour-next">${isLast ? "Finish ✓" : "Next " + icon("chevronRight", 13)}</button>
+    </div>`;
+  document.body.appendChild(card);
+  card.querySelector("#tour-skip").onclick = () => endTour(true);
+  const back = card.querySelector("#tour-back");
+  if (back) back.onclick = () => startTour(i - 1);
+  card.querySelector("#tour-next").onclick = () => startTour(i + 1);
+  const navEl = document.querySelector(`.nav-item[data-nav="${step.nav}"]`);
+  if (navEl) navEl.classList.add("tour-spotlight");
+}
+function endTourDom() {
+  document.querySelectorAll(".tour-card").forEach(e => e.remove());
+  document.querySelectorAll(".tour-spotlight").forEach(e => e.classList.remove("tour-spotlight"));
+}
+function endTour(finished) {
+  endTourDom();
+  if (finished && tourState === TOUR_STEPS.length - 1) toast("Tour complete — you're ready to go 🎉");
+  tourState = null;
+}
 
 /* ---------------- theme ---------------- */
 function preferredTheme() {

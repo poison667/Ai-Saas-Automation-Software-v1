@@ -262,7 +262,7 @@ ROUTES.generator = {
                 ${["short", "medium", "long"].map(l => `<button class="${l === genState.length ? "active" : ""}" data-len="${l}">${l[0].toUpperCase() + l.slice(1)}</button>`).join("")}
               </div>
             </div>
-            <button class="btn primary lg block" id="gen-go">${icon("sparkles", 16)} Generate post</button>
+            <button class="btn primary lg block" id="gen-go" data-perm="generate">${icon("sparkles", 16)} Generate post</button>
             <p class="faint text-c" style="font-size:11.5px;margin-top:9px">Uses 10 AI credits per generation</p>
           </div>
         </div>
@@ -432,7 +432,7 @@ ROUTES.posts = {
         <div class="tabs" id="posts-tabs"></div>
         <span class="spacer"></span>
         <div class="search-box">${icon("search", 15)}<input class="input" id="posts-search" placeholder="Search posts…" value="${esc(postsState.query)}"></div>
-        <button class="btn primary sm" id="posts-new">${icon("plus", 14)} New post</button>
+        <button class="btn primary sm" id="posts-new" data-perm="create">${icon("plus", 14)} New post</button>
       </div>
       <div class="card" style="padding:8px 16px"><div id="posts-table">${skeletonTable(6)}</div></div>`;
     document.getElementById("posts-new").onclick = () => openPostModal(null, {});
@@ -692,6 +692,6 @@ function drawCalSide(byDay) {
         <div class="empty-ico" style="width:56px;height:56px;border-radius:16px">${icon("calendar", 22)}</div>
         <h3 style="font-size:14px">Nothing planned</h3><p style="font-size:12.5px">This day is wide open.</p>
       </div>`}
-    <button class="btn primary sm block mt-16" id="cal-new">${icon("plus", 14)} Schedule for this day</button>`;
+    <button class="btn primary sm block mt-16" id="cal-new" data-perm="schedule">${icon("plus", 14)} Schedule for this day</button>`;
   document.getElementById("cal-new").onclick = () => openPostModal(null, { scheduled_at: iso + "T09:00", status: "scheduled" });
 }

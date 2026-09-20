@@ -579,3 +579,27 @@ kbd { font-family: inherit; }
 [data-theme="light"] .chart-tip { background: #fff; }
 [data-theme="light"] .empty .empty-ico { background: #f0f1f7; }
 [data-theme="light"] ::-webkit-scrollbar-thumb { background: #c8cddb; border-color: var(--bg); }
+
+/* ---------- role preview ---------- */
+.role-select { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 9px; font-size: 12px; padding: 5px 8px; cursor: pointer; font-weight: 600; }
+.role-select:focus { outline: none; border-color: var(--violet); }
+.role-banner { display: flex; align-items: center; gap: 8px; margin: 0 0 16px; padding: 10px 14px; border-radius: 11px; font-size: 13px; color: #fbbf24; background: rgba(251,191,36,.09); border: 1px solid rgba(251,191,36,.3); }
+.role-blocked { opacity: .38; cursor: not-allowed !important; filter: saturate(.4); }
+
+/* ---------- product tour ---------- */
+.tour-card { position: fixed; right: 22px; bottom: 22px; z-index: 200; width: min(380px, calc(100vw - 44px)); background: var(--panel); border: 1px solid var(--border-strong); border-radius: 15px; box-shadow: var(--shadow); padding: 18px; }
+.tour-head { display: flex; align-items: center; gap: 9px; font-size: 15px; margin-bottom: 8px; color: var(--violet); }
+.tour-head b { color: var(--text); }
+.tour-count { margin-left: auto; font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.tour-card p { font-size: 13.5px; line-height: 1.6; color: var(--muted); margin-bottom: 14px; }
+.tour-actions { display: flex; align-items: center; gap: 8px; }
+.tour-spotlight { background: rgba(139,92,246,.18) !important; border-radius: 10px; box-shadow: 0 0 0 2px var(--violet), 0 0 24px rgba(139,92,246,.5); position: relative; z-index: 5; }
+
+/* ---------- experiments ---------- */
+.stat-mini { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 12.5px; color: var(--muted); }
+.stat-mini b { color: var(--text); font-size: 15px; }
+
+/* ---------- webhook feed ---------- */
+.wh-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.wh-row:last-child { border-bottom: none; }
+.wh-ic { width: 30px; height: 30px; flex-shrink: 0; border-radius: 8px; background: rgba(139,92,246,.13); color: var(--violet); display: flex; align-items: center; justify-content: center; }

@@ -11,7 +11,7 @@ ROUTES.accounts = {
       <div class="page-head">
         <span class="muted" id="accounts-count"></span>
         <span class="spacer"></span>
-        <button class="btn primary sm" id="acc-new">${icon("plus", 14)} Connect account</button>
+        <button class="btn primary sm" id="acc-new" data-perm="connect">${icon("plus", 14)} Connect account</button>
       </div>
       <div id="acc-grid">${skeletonCards(3, 190)}</div>`;
     document.getElementById("acc-new").onclick = () => openAccountModal();
@@ -161,7 +161,7 @@ ROUTES.campaigns = {
       <div class="page-head">
         <span class="muted" id="camp-count"></span>
         <span class="spacer"></span>
-        <button class="btn primary sm" id="camp-new">${icon("plus", 14)} New campaign</button>
+        <button class="btn primary sm" id="camp-new" data-perm="create">${icon("plus", 14)} New campaign</button>
       </div>
       <div id="camp-grid">${skeletonCards(3, 210)}</div>`;
     document.getElementById("camp-new").onclick = () => openCampaignModal();
@@ -376,7 +376,7 @@ ROUTES.templates = {
       <div class="page-head">
         <span class="muted" id="tpl-count"></span>
         <span class="spacer"></span>
-        <button class="btn primary sm" id="tpl-new">${icon("plus", 14)} New template</button>
+        <button class="btn primary sm" id="tpl-new" data-perm="create">${icon("plus", 14)} New template</button>
       </div>
       <div id="tpl-grid">${skeletonCards(3, 200)}</div>`;
     document.getElementById("tpl-new").onclick = () => openTemplateModal();
@@ -600,6 +600,7 @@ ROUTES.settings = {
         buttonLoading(e.currentTarget, false);
       };
     };
+    ["set-exp-ws","set-exp-an","set-exp-posts"].forEach(id=>{const e=document.getElementById(id); if(e) e.dataset.perm="export";});
     wireExport("set-exp-ws", "/api/export/workspace", "lumina-backup.json");
     wireExport("set-exp-an", "/api/export/analytics.csv", "lumina-analytics.csv");
     wireExport("set-exp-posts", "/api/export/posts.csv", "lumina-posts.csv");

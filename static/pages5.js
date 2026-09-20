@@ -70,7 +70,7 @@ ROUTES.listening = {
       <div class="page-head">
         <span class="muted" id="kw-summary"></span>
         <span class="spacer"></span>
-        <button class="btn primary sm" id="kw-add">${icon("plus", 14)} Track a keyword</button>
+        <button class="btn primary sm" id="kw-add" data-perm="create">${icon("plus", 14)} Track a keyword</button>
       </div>
       <div id="kw-grid">${skeletonCards(3, 220)}</div>`;
     document.getElementById("kw-add").onclick = () => openKeywordModal();
