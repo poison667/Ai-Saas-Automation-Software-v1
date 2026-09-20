@@ -32,6 +32,18 @@ Chrome/Edge → *Install Lumina* in the address bar. Works offline once installe
 bash run.sh        # installs python deps automatically, serves on :8000
 ```
 
+### 🪟 Windows 10/11 (no terminal needed)
+1. Install **Python 3.10+** from <https://www.python.org/downloads/> — tick
+   **"Add python.exe to PATH"** in the installer.
+2. Get the code: on the GitHub repo page click the green **Code** button →
+   **Download ZIP**, then extract the ZIP anywhere (e.g. `C:\Lumina`).
+3. **Double-click `run.bat`** inside the extracted folder. It installs the two
+   dependencies on first run, starts the server, and opens
+   `http://localhost:8000` in your browser automatically.
+4. Log in with the demo account below. Close the black window to stop the server.
+
+(`run.sh` is for Linux/macOS only — on Windows always use `run.bat`.)
+
 ## Demo login
 | email | password |
 |---|---|
