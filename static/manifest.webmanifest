@@ -1,0 +1,16 @@
+{
+  "name": "Lumina — AI Social Media Suite",
+  "short_name": "Lumina",
+  "description": "Generate, schedule and analyze social content with AI — accounts, inbox, campaigns, listening and reports in one workspace.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0c12",
+  "theme_color": "#0a0c12",
+  "categories": ["productivity", "business", "social"],
+  "icons": [
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

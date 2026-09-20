@@ -1,0 +1,10 @@
+# runtime data (auto-created & seeded on first boot)
+data/
+__pycache__/
+*.pyc
+# desktop build artifacts
+desktop/node_modules/
+desktop/release/
+# misc
+.DS_Store
+*.log

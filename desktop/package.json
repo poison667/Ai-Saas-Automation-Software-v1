@@ -1,0 +1,37 @@
+{
+  "name": "lumina",
+  "productName": "Lumina",
+  "version": "1.4.0",
+  "description": "Lumina — AI Social Media Suite. Generate, schedule and analyze social content with AI.",
+  "main": "main.js",
+  "author": "Lumina",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "social.lumina.app",
+    "productName": "Lumina",
+    "files": [
+      "main.js",
+      "icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "../server.py", "to": "server/server.py" },
+      { "from": "../static", "to": "server/static" }
+    ],
+    "directories": { "output": "release" },
+    "mac": { "icon": "icon.png", "category": "public.app-category.social-networking", "target": ["dmg", "zip"] },
+    "win": { "icon": "icon.png", "target": ["nsis"] },
+    "linux": { "icon": "icon.png", "category": "Network", "target": ["AppImage", "deb"] }
+  }
+}
