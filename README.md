@@ -11,6 +11,20 @@ single SQLite file (`data/app.db`) and can be exported or backed up at any time.
 
 ## Run it as an app
 
+### 📦 Windows — download `Lumina.exe` (no Python, no scripts)
+Every push to `main` builds standalone executables automatically via GitHub Actions:
+1. Open the repo → **Actions** tab → click the latest **Build Lumina.exe** run.
+2. Scroll to **Artifacts** and download:
+   - **Lumina-x64** — for normal 64-bit Windows, or
+   - **Lumina-x86** — for 32-bit Windows.
+3. Unzip and **double-click `Lumina.exe`**. It opens your browser at
+   `http://localhost:8000` automatically. Close the black window to quit.
+   Your data is stored in `data/app.db` next to the exe.
+
+*(If the exe shows "This app can't run on your PC", you picked the wrong
+architecture — use the other one. Check yours: Settings → System → About →
+"System type".)*
+
 ### 🖥️ Desktop application (Electron)
 ```bash
 # one-time: python deps

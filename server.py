@@ -6,6 +6,7 @@ import os
 import re
 import io
 import csv
+import sys
 import json
 import time
 import sqlite3
@@ -22,8 +23,24 @@ from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "data", "app.db")
+# ---- portable paths (works as source AND as a frozen PyInstaller exe) ----
+def _frozen() -> bool:
+    return getattr(sys, "frozen", False)
+
+def _app_dir() -> str:
+    # Bundled assets (static/) live here, even inside the exe.
+    if _frozen():
+        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.argv[0])))
+    return os.path.dirname(os.path.abspath(__file__))
+
+def _writable_dir() -> str:
+    # The SQLite DB must live somewhere writable — next to the exe, not in the temp bundle.
+    if _frozen():
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = _app_dir()
+DB_PATH = os.path.join(_writable_dir(), "data", "app.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 COOKIE = "lumina_auth"
@@ -2513,4 +2530,10 @@ app.mount("/", StaticFiles(directory=os.path.join(BASE_DIR, "static"), html=True
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, log_level="warning")
+    if _frozen():
+        import threading, webbrowser
+        print("\n  Lumina is running at http://localhost:8000")
+        print("  Login: demo@lumina.social / demo1234")
+        print("  Close this window to quit.\n")
+        threading.Timer(1.2, lambda: webbrowser.open("http://localhost:8000")).start()
+    uvicorn.run(app, host="127.0.0.1" if _frozen() else "0.0.0.0", port=8000, log_level="warning")
