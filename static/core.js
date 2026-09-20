@@ -113,6 +113,9 @@ const ICON_PATHS = {
   pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
   file: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
   globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>',
+  sun: '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+  moon: '<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>',
+  link: '<path d="M10 13a5 5 0 007.54.5l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.5l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>',
 };
 function icon(name, size = 18, cls = "") {
   const p = ICON_PATHS[name] || "";
@@ -376,6 +379,7 @@ const NAV = [
   { id: "campaigns", label: "Campaigns", icon: "target" },
   { id: "competitors", label: "Competitors", icon: "trendUp" },
   { id: "listening", label: "Social Listening", icon: "search" },
+  { id: "integrations", label: "Integrations", icon: "link" },
   { id: "templates", label: "AI Templates", icon: "bookmark" },
   { section: "Workspace" },
   { id: "team", label: "Team", icon: "users" },
@@ -415,6 +419,7 @@ function shellHTML(title, subtitle) {
         <div><h1>${esc(title)}</h1>${subtitle ? `<div class="sub">${esc(subtitle)}</div>` : ""}</div>
         <div class="topbar-right">
           <button class="icon-btn" id="palette-open" title="Search (Ctrl+K)">${icon("search", 17)}</button>
+          <button class="icon-btn" id="theme-toggle" title="Toggle theme">${icon("sun", 17)}</button>
           <span class="credits-pill">${icon("zap", 13)} ${creditsLeft} credits</span>
           <button class="btn primary sm" id="quick-new-post">${icon("plus", 14)} New post</button>
           <div class="dd">
@@ -497,6 +502,9 @@ function bindShell() {
   api("/api/posts/pending-count").then(d => updateApprovalsBadge(d.count)).catch(() => {});
   const pal = document.getElementById("palette-open");
   if (pal) pal.onclick = () => openPalette();
+  const th = document.getElementById("theme-toggle");
+  if (th) th.onclick = toggleTheme;
+  applyTheme(preferredTheme());
   const inst = document.getElementById("install-app-btn");
   if (inst) { inst.onclick = installApp; if (deferredInstallPrompt) inst.style.display = ""; }
   const doLogout = async () => {
@@ -547,6 +555,7 @@ async function boot(force) {
   if (!state.user) {
     try { state.user = await api("/api/auth/me"); } catch (e) { state.user = null; }
   }
+  applyTheme(preferredTheme());
   if (!state.user) { showAuth(); return; }
   if (!location.hash) location.hash = "#/dashboard";
   await renderRoute();
@@ -600,6 +609,19 @@ async function openPostModal(post, prefill = {}) {
           ${campaigns.map(c => `<option value="${c.id}" ${p.campaign_id === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}
         </select>
       </div>
+      <div class="utm-box">
+        <div class="utm-head" id="utm-toggle">${icon("link", 14)} Link tracking (UTM) <span class="faint">— optional</span><span style="margin-left:auto">${icon("chevronDown", 14)}</span></div>
+        <div id="utm-body" style="display:none">
+          <div class="field"><label>Destination URL</label><input class="input" id="utm-url" placeholder="https://yoursite.com/launch"></div>
+          <div class="grid cols-3" style="gap:10px">
+            <div class="field"><label>Source</label><input class="input" id="utm-src" value="lumina"></div>
+            <div class="field"><label>Medium</label><select class="input" id="utm-med"><option>social</option><option>organic</option><option>email</option><option>cpc</option></select></div>
+            <div class="field"><label>Campaign</label><input class="input" id="utm-cmp" placeholder="launch"></div>
+          </div>
+          <div class="char-count" id="utm-preview" style="text-align:left;color:var(--cyan)"></div>
+          <button class="btn sm" id="utm-append" type="button">${icon("plus", 13)} Append tracked link to post</button>
+        </div>
+      </div>
       </div>
       <div id="pm-preview" style="display:none"></div>
       <div class="form-error" id="pm-error"></div>`,
@@ -607,6 +629,32 @@ async function openPostModal(post, prefill = {}) {
   });
   const ta = m.el.querySelector("#pm-content");
   ta.addEventListener("input", () => { m.el.querySelector("#pm-count").textContent = ta.value.length; });
+
+  // UTM builder
+  const utmHead = m.el.querySelector("#utm-toggle");
+  const utmBody = m.el.querySelector("#utm-body");
+  utmHead.onclick = () => { utmBody.style.display = utmBody.style.display === "none" ? "" : "none"; };
+  const utmBuild = () => {
+    const url = m.el.querySelector("#utm-url").value.trim();
+    const prev = m.el.querySelector("#utm-preview");
+    if (!url) { prev.textContent = ""; return ""; }
+    const cmp = m.el.querySelector("#utm-cmp").value.trim() || "launch";
+    const u = new URL(url.startsWith("http") ? url : "https://" + url);
+    u.searchParams.set("utm_source", m.el.querySelector("#utm-src").value.trim() || "lumina");
+    u.searchParams.set("utm_medium", m.el.querySelector("#utm-med").value);
+    u.searchParams.set("utm_campaign", cmp);
+    prev.textContent = u.toString();
+    return u.toString();
+  };
+  ["#utm-url", "#utm-src", "#utm-cmp"].forEach(sel => m.el.querySelector(sel).addEventListener("input", utmBuild));
+  m.el.querySelector("#utm-med").addEventListener("change", utmBuild);
+  m.el.querySelector("#utm-append").onclick = () => {
+    const link = utmBuild();
+    if (!link) { toast("Add a destination URL first", { type: "info" }); return; }
+    ta.value = ta.value.trim() ? ta.value.trim() + "\n\n" + link : link;
+    m.el.querySelector("#pm-count").textContent = ta.value.length;
+    toast("Tracked link appended");
+  };
   m.el.querySelectorAll("#pm-platforms .chip").forEach(ch => ch.onclick = () => ch.classList.toggle("active"));
   const statusSel = m.el.querySelector("#pm-status");
   statusSel.onchange = () => { m.el.querySelector("#pm-when-wrap").style.display = statusSel.value === "scheduled" ? "" : "none"; };
@@ -802,6 +850,26 @@ function openPalette() {
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (state.user) openPalette(); }
 });
+
+/* ---------------- theme ---------------- */
+function preferredTheme() {
+  if (state.user && state.user.prefs && state.user.prefs.theme) return state.user.prefs.theme;
+  try { return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; } catch (e) { return "dark"; }
+}
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  const btn = document.getElementById("theme-toggle");
+  if (btn) btn.innerHTML = icon(t === "light" ? "moon" : "sun", 17);
+}
+async function toggleTheme() {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  applyTheme(next);
+  if (state.user) {
+    state.user.prefs = state.user.prefs || {};
+    state.user.prefs.theme = next;
+    api("/api/me", { method: "PATCH", body: { prefs: { theme: next } } }).catch(() => {});
+  }
+}
 
 /* ---------------- PWA install ---------------- */
 let deferredInstallPrompt = null;

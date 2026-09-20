@@ -1,7 +1,7 @@
 /* Lumina service worker — offline-first for the app shell, network-first for the API */
-const CACHE = "lumina-shell-v1";
+const CACHE = "lumina-shell-v2";
 const SHELL = ["/", "/styles.css", "/core.js", "/pages1.js", "/pages2.js", "/pages3.js",
-               "/pages4.js", "/pages5.js", "/manifest.webmanifest", "/icon-512.png"];
+               "/pages4.js", "/pages5.js", "/pages6.js", "/manifest.webmanifest", "/icon-512.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

@@ -187,6 +187,24 @@ CREATE TABLE IF NOT EXISTS invoices (
   status TEXT NOT NULL DEFAULT 'paid',
   date TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS post_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  platforms TEXT NOT NULL DEFAULT '[]',
+  edited_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS integrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  webhook_token TEXT NOT NULL DEFAULT '',
+  connected_at TEXT NOT NULL,
+  last_sync TEXT
+);
 CREATE TABLE IF NOT EXISTS keywords (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
@@ -784,6 +802,11 @@ def seed_demo(conn):
                      (uid, title, start.isoformat(), end.isoformat(), json.dumps(stats),
                       now_iso(-(k - 1) * 86400 - 3600 * 6)))
 
+    # ---- integrations ----
+    for key in ("slack", "canva"):
+        conn.execute("INSERT INTO integrations (user_id, key, enabled, webhook_token, connected_at, last_sync) VALUES (?,?,?,?,?,?)",
+                     (uid, key, 1, secrets.token_hex(8), day_iso(-20), now_iso(-3600 * 5)))
+
     # ---- social listening keywords ----
     kw_rng = random.Random(99)
     for kw in ["Orbit 2.0", "smart layout", "nova studio"]:
@@ -1078,6 +1101,11 @@ async def update_post(id: int, request: Request, user=Depends(require_user)):
     body = await read_json(request)
     with closing(db()) as conn:
         row = own(conn, "posts", id, user["id"])
+        changed = (body.get("content") is not None and body.get("content") != row["content"]) or \
+                  (body.get("platforms") is not None and json.dumps(body.get("platforms")) != row["platforms"])
+        if changed:
+            conn.execute("INSERT INTO post_versions (post_id, user_id, content, platforms, edited_by, created_at) VALUES (?,?,?,?,?,?)",
+                         (id, user["id"], row["content"], row["platforms"], user["name"], now_iso()))
         d = dict(row)
         for k in ("content", "status", "scheduled_at", "campaign_id"):
             if k in body:
@@ -1106,6 +1134,38 @@ async def delete_post(id: int, user=Depends(require_user)):
         conn.execute("DELETE FROM posts WHERE id=?", (id,))
         conn.commit()
     return {"ok": True}
+
+@app.get("/api/posts/{id}/versions")
+async def post_versions(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "posts", id, user["id"])
+        rows = conn.execute("SELECT * FROM post_versions WHERE post_id=? AND user_id=? ORDER BY datetime(created_at) DESC",
+                            (id, user["id"])).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["platforms"] = json.loads(d["platforms"] or "[]")
+        out.append(d)
+    return out
+
+@app.post("/api/posts/{id}/versions/{vid}/restore")
+async def restore_version(id: int, vid: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "posts", id, user["id"])
+        v = conn.execute("SELECT * FROM post_versions WHERE id=? AND post_id=? AND user_id=?",
+                         (vid, id, user["id"])).fetchone()
+        if not v:
+            raise HTTPException(404, "Version not found")
+        # snapshot current before restoring
+        cur = conn.execute("SELECT * FROM posts WHERE id=?", (id,)).fetchone()
+        conn.execute("INSERT INTO post_versions (post_id, user_id, content, platforms, edited_by, created_at) VALUES (?,?,?,?,?,?)",
+                     (id, user["id"], cur["content"], cur["platforms"], user["name"], now_iso()))
+        conn.execute("UPDATE posts SET content=?, platforms=?, updated_at=? WHERE id=?",
+                     (v["content"], v["platforms"], now_iso(), id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM posts WHERE id=?", (id,)).fetchone()
+    log_activity(user["id"], "post", "Restored an earlier version of a post")
+    return post_dict(row)
 
 @app.post("/api/posts/{id}/approve")
 async def approve_post(id: int, user=Depends(require_user)):
@@ -1534,6 +1594,87 @@ async def export_posts_csv(user=Depends(require_user)):
     return Response(content=buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="lumina-posts-{day_iso()}.csv"'})
 
+# ---- integrations
+
+INTEGRATION_CATALOG = ["slack", "zapier", "canva", "gdrive", "stripe", "shopify"]
+
+@app.get("/api/integrations")
+async def list_integrations(user=Depends(require_user)):
+    await jitter(0.1, 0.3)
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM integrations WHERE user_id=? ORDER BY connected_at", (user["id"],)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/integrations")
+async def connect_integration(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    key = body.get("key")
+    if key not in INTEGRATION_CATALOG:
+        raise HTTPException(400, "Unknown integration")
+    await asyncio.sleep(1.0)  # simulated OAuth
+    with closing(db()) as conn:
+        if conn.execute("SELECT 1 FROM integrations WHERE user_id=? AND key=?", (user["id"], key)).fetchone():
+            raise HTTPException(409, "Already connected")
+        cur = conn.execute("INSERT INTO integrations (user_id, key, enabled, webhook_token, connected_at, last_sync) VALUES (?,?,?,?,?,?)",
+                           (user["id"], key, 1, secrets.token_hex(8), now_iso(), now_iso()))
+        row = conn.execute("SELECT * FROM integrations WHERE id=?", (cur.lastrowid,)).fetchone()
+        conn.commit()
+    log_activity(user["id"], "account", f"Connected the {key} integration")
+    return dict(row)
+
+@app.patch("/api/integrations/{id}")
+async def update_integration(id: int, request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    with closing(db()) as conn:
+        row = own(conn, "integrations", id, user["id"])
+        enabled = 1 if body.get("enabled", row["enabled"]) else 0
+        conn.execute("UPDATE integrations SET enabled=?, last_sync=? WHERE id=?", (enabled, now_iso(), id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM integrations WHERE id=?", (id,)).fetchone()
+    return dict(row)
+
+@app.delete("/api/integrations/{id}")
+async def delete_integration(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "integrations", id, user["id"])
+        conn.execute("DELETE FROM integrations WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.post("/api/integrations/{id}/test")
+async def test_integration(id: int, user=Depends(require_user)):
+    await asyncio.sleep(0.8)
+    with closing(db()) as conn:
+        row = own(conn, "integrations", id, user["id"])
+        conn.execute("UPDATE integrations SET last_sync=? WHERE id=?", (now_iso(), id))
+        conn.commit()
+    log_activity(user["id"], "account", f"Test event delivered to {row['key']} ✓")
+    return {"ok": True, "key": row["key"]}
+
+# ---- onboarding
+
+@app.get("/api/onboarding")
+async def onboarding(user=Depends(require_user)):
+    uid = user["id"]
+    with closing(db()) as conn:
+        def has(sql):
+            return conn.execute(sql, (uid,)).fetchone()["c"] > 0
+        steps = [
+            {"id": "account", "label": "Connect a social account", "link": "accounts",
+             "done": has("SELECT COUNT(*) c FROM accounts WHERE user_id=?")},
+            {"id": "generate", "label": "Generate your first AI draft", "link": "generator",
+             "done": has("SELECT COUNT(*) c FROM generations WHERE user_id=?")},
+            {"id": "post", "label": "Create a post", "link": "posts",
+             "done": has("SELECT COUNT(*) c FROM posts WHERE user_id=?")},
+            {"id": "schedule", "label": "Schedule a post", "link": "calendar",
+             "done": has("SELECT COUNT(*) c FROM posts WHERE user_id=? AND status IN ('scheduled','published')")},
+            {"id": "keyword", "label": "Track a keyword", "link": "listening",
+             "done": has("SELECT COUNT(*) c FROM keywords WHERE user_id=?")},
+            {"id": "team", "label": "Invite a teammate", "link": "team",
+             "done": has("SELECT COUNT(*) c FROM team_members WHERE user_id=?")},
+        ]
+    return {"steps": steps, "done": sum(1 for s in steps if s["done"]), "total": len(steps)}
+
 # ---- workspace reset (demo helpers)
 
 @app.post("/api/workspace/reset")
@@ -1542,7 +1683,8 @@ async def reset_workspace(request: Request, user=Depends(require_user)):
     mode = body.get("mode", "clear")
     uid = user["id"]
     tables = ["accounts", "posts", "campaigns", "analytics", "templates", "generations", "activity",
-              "conversations", "team_members", "media", "invoices", "competitors", "reports", "keywords"]
+              "conversations", "team_members", "media", "invoices", "competitors", "reports", "keywords",
+              "post_versions", "integrations"]
     with closing(db()) as conn:
         for t in tables:
             conn.execute(f"DELETE FROM {t} WHERE user_id=?", (uid,))

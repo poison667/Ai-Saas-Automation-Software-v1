@@ -127,7 +127,24 @@ ROUTES.dashboard = {
   subtitle: "Here's what's happening across your channels.",
   async render(page) {
     refreshCurrentList = () => {};
+    let onb = null;
+    try { onb = await api("/api/onboarding"); } catch (e) {}
+    const onbHTML = onb && onb.done < onb.total ? `
+      <div class="card fade-in" style="margin-bottom:16px;border-color:rgba(139,92,246,.4)">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <h3 style="display:flex;align-items:center;gap:8px">${icon("zap", 15)} Set up your workspace <span class="badge purple">${onb.done}/${onb.total}</span></h3>
+            <div class="progress" style="margin-top:9px"><div class="bar" style="width:${(onb.done / onb.total) * 100}%;background:var(--grad)"></div></div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${onb.steps.map(s => s.done
+              ? `<span class="chip" style="opacity:.55;text-decoration:line-through;cursor:default">${icon("check", 12)} ${s.label}</span>`
+              : `<span class="chip" style="cursor:pointer" data-step="${s.link}">${s.label} →</span>`).join("")}
+          </div>
+        </div>
+      </div>` : "";
     page.innerHTML = `
+      ${onbHTML}
       <div class="grid cols-4" id="dash-stats">${Array(4).fill('<div class="card"><div class="skel skel-line" style="width:50%"></div><div class="skel" style="height:30px;width:60%;margin-top:10px"></div></div>').join("")}</div>
       <div class="dash-layout">
         <div class="stack">
@@ -144,6 +161,7 @@ ROUTES.dashboard = {
       </div>`;
     let d;
     try { d = await api("/api/dashboard"); } catch (e) { toast(e.message, { type: "error" }); return; }
+    page.querySelectorAll("[data-step]").forEach(ch => ch.onclick = () => { location.hash = "#/" + ch.dataset.step; });
 
     const s = d.stats;
     const reachVals = d.series.map(x => x.reach);
@@ -488,6 +506,7 @@ function renderPostsTable() {
           <td><div class="row-actions">
             ${p.status === "pending" ? `<button class="btn ghost sm" data-act="review">Review</button>` : ""}
             ${["draft", "scheduled"].includes(p.status) ? `<button class="icon-btn" data-act="publish" title="Publish now">${icon("send", 15)}</button>` : ""}
+            <button class="icon-btn" data-act="hist" title="Version history">${icon("clock", 15)}</button>
             <button class="icon-btn" data-act="edit" title="Edit">${icon("edit", 15)}</button>
             <button class="icon-btn" data-act="dupe" title="Duplicate">${icon("copy", 15)}</button>
             <button class="icon-btn danger" data-act="del" title="Delete">${icon("trash", 15)}</button>
@@ -501,6 +520,7 @@ function renderPostsTable() {
     tr.querySelector('[data-act="del"]').onclick = () => deletePostOptimistic(p, tr);
     const rev = tr.querySelector('[data-act="review"]');
     if (rev) rev.onclick = () => { location.hash = "#/approvals"; };
+    tr.querySelector('[data-act="hist"]').onclick = () => openVersionsModal(p);
     tr.querySelector('[data-act="dupe"]').onclick = async () => {
       try {
         await api("/api/posts", { method: "POST", body: { content: p.content, platforms: p.platforms, status: "draft" } });
@@ -527,6 +547,40 @@ function deletePostOptimistic(p, tr) {
     } catch (e) { toast("Couldn't restore post", { type: "error" }); }
   }}});
   api(`/api/posts/${p.id}`, { method: "DELETE" }).catch(() => { toast("Delete failed — restored", { type: "error" }); postsState.data.push(p); loadPosts(); });
+}
+
+function openVersionsModal(p) {
+  const m = openModal({
+    title: "Version history",
+    wide: true,
+    body: `<p class="muted" style="font-size:12.5px;margin-bottom:12px">Every edit snapshots the previous version. Restore any of them.</p><div id="vh-list">${skeletonTable(3)}</div>`,
+    foot: `<button class="btn" data-close>Close</button>`,
+  });
+  (async () => {
+    let versions = [];
+    try { versions = await api(`/api/posts/${p.id}/versions`); } catch (e) { toast(e.message, { type: "error" }); }
+    const box = m.el.querySelector("#vh-list");
+    if (!versions.length) {
+      box.innerHTML = emptyState({ icon: "clock", title: "No versions yet", message: "Edit this post and each previous version will be saved here automatically." });
+      return;
+    }
+    box.innerHTML = versions.map(v => `
+      <div class="msg-bubble" style="margin-bottom:11px">
+        <div class="mb-meta"><b>${esc(v.edited_by)}</b> · edited ${timeAgo(v.created_at)} ${platRow(v.platforms, 10)}
+          <span style="margin-left:auto"><button class="btn sm" data-restore="${v.id}">${icon("refresh", 12)} Restore</button></span>
+        </div>
+        ${esc(v.content)}
+      </div>`).join("");
+    box.querySelectorAll("[data-restore]").forEach(btn => btn.onclick = async () => {
+      buttonLoading(btn, true, "Restoring…");
+      try {
+        await api(`/api/posts/${p.id}/versions/${btn.dataset.restore}/restore`, { method: "POST" });
+        m.close();
+        toast("Version restored");
+        loadPosts();
+      } catch (e) { toast(e.message, { type: "error" }); buttonLoading(btn, false); }
+    });
+  })();
 }
 
 async function publishNow(p, tr) {
