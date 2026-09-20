@@ -191,6 +191,7 @@ function renderConvDetail() {
     <div id="cd-suggest"></div>
     ${c.status !== "archived" ? `
     <div class="composer mt-16">
+      <div id="qr-row" class="qr-row"></div>
       <textarea class="input" id="cd-text" placeholder="Write a reply as ${esc(state.user.workspace)}…"></textarea>
       <div style="display:flex;flex-direction:column;gap:7px">
         <button class="btn sm" id="cd-ai">${icon("sparkles", 13)} AI reply</button>
@@ -222,6 +223,7 @@ function renderConvDetail() {
   };
   const sendBtn = document.getElementById("cd-send");
   if (sendBtn) sendBtn.onclick = send;
+  loadQuickReplies();
   const ta = document.getElementById("cd-text");
   if (ta) ta.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); });
 
@@ -649,6 +651,66 @@ function drawBilling(b) {
 }
 
 /* ============================================================ COMPETITORS */
+/* ---------------- quick replies ---------------- */
+async function loadQuickReplies() {
+  const row = document.getElementById("qr-row");
+  if (!row) return;
+  let snippets = [];
+  try { snippets = await api("/api/quick-replies"); } catch (e) { return; }
+  row.innerHTML = `<span class="faint" style="font-size:11px;align-self:center">${icon("zap", 11)} Quick replies:</span>
+    ${snippets.map(s => `<span class="chip" data-qr="${s.id}" title="${esc(s.body)}">${esc(s.title)}</span>`).join("")}
+    <span class="chip" id="qr-manage" style="border-style:dashed">${icon("sliders", 11)} Manage</span>`;
+  row.querySelectorAll("[data-qr]").forEach(chip => chip.onclick = () => {
+    const s = snippets.find(x => x.id === +chip.dataset.qr);
+    const t = document.getElementById("cd-text");
+    if (t && s) { t.value = s.body; t.focus(); }
+  });
+  const mg = document.getElementById("qr-manage");
+  if (mg) mg.onclick = () => openQuickReplyModal();
+}
+
+function openQuickReplyModal() {
+  const m = openModal({
+    title: "Manage quick replies",
+    body: `<div id="qr-list">${skeletonTable(3)}</div>
+      <div class="divider" style="margin:14px 0"></div>
+      <div class="field"><label>New snippet — name</label><input class="input" id="qr-title" placeholder="e.g. Pricing question"></div>
+      <div class="field"><label>Text</label><textarea class="input" id="qr-body" rows="3" placeholder="The canned reply text…"></textarea></div>`,
+    foot: `<button class="btn" data-close>Done</button><button class="btn primary" id="qr-add">${icon("plus", 14)} Add snippet</button>`,
+  });
+  const refresh = async () => {
+    const box = m.el.querySelector("#qr-list");
+    let snippets = [];
+    try { snippets = await api("/api/quick-replies"); } catch (e) {}
+    box.innerHTML = snippets.length ? snippets.map(s => `
+      <div class="list-item">
+        <div class="li-main"><b>${esc(s.title)}</b><span style="white-space:normal">${esc(s.body.slice(0, 90))}${s.body.length > 90 ? "…" : ""}</span></div>
+        <button class="icon-btn danger" data-qdel="${s.id}" title="Delete">${icon("trash", 14)}</button>
+      </div>`).join("")
+      : `<p class="muted" style="font-size:12.5px">No snippets yet — add one below.</p>`;
+    box.querySelectorAll("[data-qdel]").forEach(btn => btn.onclick = async () => {
+      await api(`/api/quick-replies/${btn.dataset.qdel}`, { method: "DELETE" });
+      toast("Snippet deleted", { type: "info" });
+      refresh(); loadQuickReplies();
+    });
+  };
+  refresh();
+  m.el.querySelector("#qr-add").onclick = async () => {
+    const title = m.el.querySelector("#qr-title").value.trim();
+    const body = m.el.querySelector("#qr-body").value.trim();
+    if (!title || !body) { toast("Fill in both fields", { type: "info" }); return; }
+    buttonLoading(m.el.querySelector("#qr-add"), true);
+    try {
+      await api("/api/quick-replies", { method: "POST", body: { title, body } });
+      m.el.querySelector("#qr-title").value = "";
+      m.el.querySelector("#qr-body").value = "";
+      toast("Snippet added");
+      refresh(); loadQuickReplies();
+    } catch (e) { toast(e.message, { type: "error" }); }
+    buttonLoading(m.el.querySelector("#qr-add"), false);
+  };
+}
+
 ROUTES.competitors = {
   title: "Competitors",
   subtitle: "Benchmark your growth against the brands you watch.",
@@ -716,6 +778,7 @@ function drawCompetitors(comps, mine) {
             <b style="font-size:14px;display:block">${esc(c.name)}</b>
             <span class="muted" style="font-size:12px">${esc(c.handle)} · ${PLATFORMS[c.platform]?.name || c.platform}</span>
           </div>
+          <button class="icon-btn" data-act="battle" title="Run battle report (5 credits)">${icon("zap", 15)}</button>
           <button class="icon-btn danger" data-act="del" title="Stop tracking">${icon("trash", 15)}</button>
         </div>
         <div class="comp-stats">
@@ -726,6 +789,7 @@ function drawCompetitors(comps, mine) {
       </div>`).join("")}`;
   cards.querySelectorAll(".comp-card").forEach(card => {
     const c = comps.find(x => x.id === Number(card.dataset.id));
+    card.querySelector('[data-act="battle"]').onclick = () => openBattleModal(c);
     card.querySelector('[data-act="del"]').onclick = async () => {
       const ok = await confirmModal({ title: "Stop tracking", message: `Stop tracking ${c.name}? Their historical data is removed from your charts.`, confirmLabel: "Stop tracking" });
       if (!ok) return;
@@ -736,6 +800,55 @@ function drawCompetitors(comps, mine) {
       api(`/api/competitors/${c.id}`, { method: "DELETE" }).catch(() => refreshCurrentList());
       setTimeout(() => drawCompetitors(comps, mine), 250);
     };
+  });
+}
+
+function openBattleModal(c) {
+  const m = openModal({
+    title: `Battle report — you vs ${esc(c.name)}`,
+    wide: true,
+    body: `<div id="battle-body">
+      <div class="thinking" style="padding:30px 0"><div class="t-line"><span class="spin"></span>
+      Scanning ${esc(c.name)}'s public footprint and crunching 30 days of head-to-head data…</div></div>
+    </div>`,
+    foot: `<button class="btn" data-close>Close</button>`,
+  });
+  api(`/api/competitors/${c.id}/battle`, { method: "POST" }).then(b => {
+    const box = m.el.querySelector("#battle-body");
+    if (!box) return;
+    const fmtV = (v, f) => f === "pct" ? v + "%" : fmtNum(v);
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <span class="badge ${b.leading ? "green" : "red"}" style="font-size:13px;padding:7px 13px">
+          ${b.leading ? icon("trendUp", 13) + " You're leading" : icon("alert", 13) + " You're behind"} — ${b.score} metrics</span>
+        <span class="faint" style="font-size:12px">5 credits used · ${b.credits_left} left</span>
+      </div>
+      ${b.rows.map(r => {
+        const total = Math.max(r.you, r.them) || 1;
+        return `
+        <div style="margin-bottom:13px">
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px">
+            <span class="muted">${r.metric}</span>
+            <span><b style="color:${r.winner === "you" ? "#34d399" : "var(--text)"}">${fmtV(r.you, r.fmt)}</b>
+            <span class="faint"> you · them </span><b style="color:${r.winner === "them" ? "#f87171" : "var(--text)"}">${fmtV(r.them, r.fmt)}</b></span>
+          </div>
+          <div style="display:flex;gap:4px;height:8px">
+            <div style="width:${(r.you / total) * 100}%;border-radius:4px;background:var(--grad)"></div>
+            <div style="width:${(r.them / total) * 100}%;border-radius:4px;background:${c.color || "#64748b"};opacity:.55"></div>
+          </div>
+        </div>`;
+      }).join("")}
+      <div class="msg-bubble" style="margin-top:16px"><div class="mb-meta">${icon("sparkles", 12)} Verdict</div>${esc(b.verdict)}</div>
+      <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+        ${b.advice.map(a => `<div class="badge gray" style="font-size:12px;padding:8px 12px;font-weight:400;text-align:left;white-space:normal;flex:1;min-width:200px">💡 ${esc(a)}</div>`).join("")}
+      </div>`;
+    if (typeof updateCreditsPill === "function") {
+      state.user.ai_credits_used = (state.user.credits_limit || 0) - b.credits_left;
+      updateCreditsPill();
+    }
+  }).catch(e => {
+    const box = m.el.querySelector("#battle-body");
+    if (box) box.innerHTML = `<div class="empty">${icon("alert", 22)}<b>Couldn't run the battle</b><p class="muted">${esc(e.message)}</p></div>`;
   });
 }
 

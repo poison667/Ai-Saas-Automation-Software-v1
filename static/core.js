@@ -634,6 +634,7 @@ async function openPostModal(post, prefill = {}) {
           <input class="input" id="pm-when" type="datetime-local" value="${dt}">
         </div>
       </div>
+      <div class="conflict-box" id="pm-conflict" style="display:none"></div>
       <div class="field">
         <label>Campaign <span class="faint">(optional)</span></label>
         <select class="input" id="pm-campaign">
@@ -707,7 +708,42 @@ async function openPostModal(post, prefill = {}) {
   };
   m.el.querySelectorAll("#pm-platforms .chip").forEach(ch => ch.onclick = () => ch.classList.toggle("active"));
   const statusSel = m.el.querySelector("#pm-status");
-  statusSel.onchange = () => { m.el.querySelector("#pm-when-wrap").style.display = statusSel.value === "scheduled" ? "" : "none"; };
+  statusSel.onchange = () => {
+    m.el.querySelector("#pm-when-wrap").style.display = statusSel.value === "scheduled" ? "" : "none";
+    runConflictCheck();
+  };
+
+  // --- schedule conflict detection ---
+  let conflictTimer = null;
+  function selectedPlats() {
+    return [...m.el.querySelectorAll("#pm-platforms .chip.active")].map(c => c.dataset.plat);
+  }
+  function runConflictCheck() {
+    const box = m.el.querySelector("#pm-conflict");
+    if (!box) return;
+    const when = m.el.querySelector("#pm-when").value;
+    if (statusSel.value !== "scheduled" || !when) { box.style.display = "none"; box.innerHTML = ""; return; }
+    clearTimeout(conflictTimer);
+    conflictTimer = setTimeout(async () => {
+      try {
+        const res = await api("/api/posts/check-conflict", { method: "POST", body: {
+          scheduled_at: when + ":00", platforms: selectedPlats(), exclude_id: p.id || null,
+        }});
+        if (res.conflicts && res.conflicts.length) {
+          box.style.display = "";
+          box.innerHTML = `${icon("alert", 15)} <b>Heads up:</b> ${res.conflicts.length} scheduled post${res.conflicts.length === 1 ? "" : "s"} hit the same platform${res.conflicts[0].platforms.length === 1 ? "" : "s"} within ±45&nbsp;min:
+            <ul style="margin:7px 0 0 4px">${res.conflicts.map(c => `<li>“${esc(c.content.slice(0, 46))}…” — ${c.platforms.map(x => platIcon(x, 10)).join(" ")} at ${esc((c.scheduled_at || "").slice(11, 16))}</li>`).join("")}</ul>
+            <span class="faint" style="font-size:11px">You can still schedule — this is a warning, not a blocker.</span>`;
+        } else { box.style.display = "none"; box.innerHTML = ""; }
+      } catch (e) { box.style.display = "none"; }
+    }, 350);
+  }
+  m.el.querySelector("#pm-when").addEventListener("input", runConflictCheck);
+  m.el.querySelectorAll("#pm-platforms .chip").forEach(ch => {
+    const orig = ch.onclick;
+    ch.onclick = () => { orig(); runConflictCheck(); };
+  });
+  if (statusSel.value === "scheduled" && m.el.querySelector("#pm-when").value) runConflictCheck();
 
   // --- live platform preview ---
   const previewPane = m.el.querySelector("#pm-preview");

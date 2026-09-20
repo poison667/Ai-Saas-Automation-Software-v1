@@ -603,3 +603,11 @@ kbd { font-family: inherit; }
 .wh-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .wh-row:last-child { border-bottom: none; }
 .wh-ic { width: 30px; height: 30px; flex-shrink: 0; border-radius: 8px; background: rgba(139,92,246,.13); color: var(--violet); display: flex; align-items: center; justify-content: center; }
+
+/* ---------- v1.8: quick replies / conflicts / battle ---------- */
+.qr-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+.qr-row .chip { font-size: 11px; padding: 4px 9px; }
+.conflict-box { background: rgba(251,191,36,.09); border: 1px solid rgba(251,191,36,.35); color: #fcd34d; border-radius: 10px; padding: 10px 13px; font-size: 12.5px; line-height: 1.5; margin: 10px 0; }
+[data-theme="light"] .conflict-box { color: #92600a; background: rgba(251,191,36,.14); }
+.conflict-box ul { padding-left: 16px; }
+.cal-pill.clash { border: 1px solid rgba(251,191,36,.7); background: rgba(251,191,36,.16) !important; }

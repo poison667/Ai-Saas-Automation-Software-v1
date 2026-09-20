@@ -349,6 +349,17 @@ ROUTES.generator = {
             <button class="btn primary lg block" id="gen-go" data-perm="generate">${icon("sparkles", 16)} Generate post</button>
             <p class="faint text-c" style="font-size:11.5px;margin-top:9px">Uses 10 AI credits per generation</p>
           </div>
+          <div class="card">
+            <h3 style="display:flex;align-items:center;gap:8px">${icon("sparkles", 15)} Brand voice studio</h3>
+            <div class="card-sub">Applied to every AI draft and rewrite automatically.</div>
+            <div class="field"><label>Signature (appended to posts)</label><input class="input" id="bv-sig" placeholder="e.g. — The Lumina Team"></div>
+            <div class="field"><label>Words to avoid (comma-separated)</label><input class="input" id="bv-avoid" placeholder="e.g. game-changer, synergy"></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:6px 0 13px">
+              <label style="font-size:12.5px;font-weight:600">Allow emojis in AI output</label>
+              <label class="switch"><input type="checkbox" id="bv-emoji" checked><span class="track"></span></label>
+            </div>
+            <button class="btn block" id="bv-save">${icon("check", 14)} Save brand voice</button>
+          </div>
         </div>
         <div class="stack">
           <div class="card gen-output">
@@ -380,6 +391,28 @@ ROUTES.generator = {
       </div>`;
     }
     const setButtons = on => ["gen-copy", "gen-regen", "gen-draft", "gen-schedule"].forEach(id => document.getElementById(id).disabled = !on);
+
+    // brand voice load/save
+    const bv = (state.user.prefs && state.user.prefs.brandVoice) || {};
+    document.getElementById("bv-sig").value = bv.signature || "";
+    document.getElementById("bv-avoid").value = (bv.avoid || []).join(", ");
+    document.getElementById("bv-emoji").checked = bv.emoji !== false;
+    document.getElementById("bv-save").onclick = async () => {
+      const voice = {
+        signature: document.getElementById("bv-sig").value.trim(),
+        avoid: document.getElementById("bv-avoid").value.split(",").map(s => s.trim()).filter(Boolean),
+        emoji: document.getElementById("bv-emoji").checked,
+      };
+      const btn = document.getElementById("bv-save");
+      buttonLoading(btn, true, "Saving…");
+      try {
+        await api("/api/me", { method: "PATCH", body: { prefs: { brandVoice: voice } } });
+        state.user.prefs = state.user.prefs || {};
+        state.user.prefs.brandVoice = voice;
+        toast("Brand voice saved — AI drafts now follow it ✨");
+      } catch (e) { toast(e.message, { type: "error" }); }
+      buttonLoading(btn, false);
+    };
 
     document.querySelectorAll("#gen-tone .chip").forEach(c => c.onclick = () => {
       document.querySelectorAll("#gen-tone .chip").forEach(x => x.classList.remove("active"));
@@ -734,6 +767,17 @@ function drawCal() {
   const todayStr = new Date().toISOString().slice(0, 10);
   const byDay = {};
   calState.posts.forEach(p => { (byDay[p.day] = byDay[p.day] || []).push(p); });
+  // conflict detection: same platform within ±45 min
+  const conflictIds = new Set();
+  Object.values(byDay).forEach(list => {
+    const sched = list.filter(p => p.status === "scheduled" && p.scheduled_at);
+    for (let i = 0; i < sched.length; i++) for (let j = i + 1; j < sched.length; j++) {
+      const t1 = new Date(sched[i].scheduled_at).getTime(), t2 = new Date(sched[j].scheduled_at).getTime();
+      if (Math.abs(t1 - t2) <= 45 * 60000 && sched[i].platforms.some(x => sched[j].platforms.includes(x))) {
+        conflictIds.add(sched[i].id); conflictIds.add(sched[j].id);
+      }
+    }
+  });
   let cells = "";
   const dows = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   cells += dows.map(d => `<div class="cal-dow">${d}</div>`).join("");
@@ -745,25 +789,27 @@ function drawCal() {
     const inMonth = d.getMonth() === m;
     const items = byDay[iso] || [];
     const pills = items.slice(0, 2).map(p =>
-      `<span class="cal-pill ${p.status}">${p.status === "scheduled" ? fmtTime(p.scheduled_at) + " " : ""}${esc(p.content.slice(0, 16))}…</span>`).join("");
+      `<span class="cal-pill ${p.status} ${conflictIds.has(p.id) ? "clash" : ""}" title="${conflictIds.has(p.id) ? "Schedule conflict — same platform within 45 min" : ""}">${conflictIds.has(p.id) ? "⚠ " : ""}${p.status === "scheduled" ? fmtTime(p.scheduled_at) + " " : ""}${esc(p.content.slice(0, 16))}…</span>`).join("");
     const more = items.length > 2 ? `<span class="faint" style="font-size:10px;padding-left:2px">+${items.length - 2} more</span>` : "";
     cells += `<div class="cal-day ${inMonth ? "" : "other"} ${iso === todayStr ? "today" : ""} ${iso === calState.selected ? "selected" : ""}" data-day="${iso}">
       <span class="dnum">${d.getDate()}</span>${pills}${more}</div>`;
   }
   body.innerHTML = `<div class="cal-grid">${cells}</div>`;
   body.querySelectorAll(".cal-day").forEach(el => el.onclick = () => { calState.selected = el.dataset.day; drawCal(); });
-  drawCalSide(byDay);
+  drawCalSide(byDay, conflictIds);
 }
 
-function drawCalSide(byDay) {
+function drawCalSide(byDay, conflictIds) {
   const side = document.getElementById("cal-side");
   if (!side) return;
   const iso = calState.selected;
   const d = new Date(iso + "T12:00:00");
   const items = (byDay && byDay[iso]) || calState.posts.filter(p => p.day === iso);
+  const clashes = items.filter(p => conflictIds && conflictIds.has(p.id));
   side.innerHTML = `
     <h3>${d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</h3>
     <div class="card-sub">${items.length} post${items.length === 1 ? "" : "s"} this day</div>
+    ${clashes.length ? `<div class="conflict-box" style="margin-bottom:10px">${icon("alert", 14)} <b>${clashes.length} conflict${clashes.length === 1 ? "" : "s"}:</b> posts hitting the same platform within 45&nbsp;min may cannibalize each other's reach.</div>` : ""}
     ${items.length ? items.map(p => `
       <div class="list-item">
         <span class="li-ico" style="background:${p.status === "published" ? "rgba(52,211,153,.12)" : "rgba(96,165,250,.12)"};color:${p.status === "published" ? "var(--green)" : "var(--blue)"}">

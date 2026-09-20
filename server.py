@@ -206,6 +206,13 @@ CREATE TABLE IF NOT EXISTS integrations (
   connected_at TEXT NOT NULL,
   last_sync TEXT
 );
+CREATE TABLE IF NOT EXISTS quick_replies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ab_tests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
@@ -823,6 +830,15 @@ def seed_demo(conn):
                      (uid, title, start.isoformat(), end.isoformat(), json.dumps(stats),
                       now_iso(-(k - 1) * 86400 - 3600 * 6)))
 
+    # ---- quick replies ----
+    for title, body in (
+        ("Thanks!", "Thanks so much for the kind words — it genuinely made our day! 💜"),
+        ("Support handoff", "Great question! I'm looping in our support team — they'll get back to you within a few hours."),
+        ("Collab open", "We love this idea! Drop us a DM with the details and let's make it happen."),
+    ):
+        conn.execute("INSERT INTO quick_replies (user_id, title, body, created_at) VALUES (?,?,?,?)",
+                     (uid, title, body, day_iso(-12)))
+
     # ---- integrations ----
     for key in ("slack", "canva"):
         conn.execute("INSERT INTO integrations (user_id, key, enabled, webhook_token, connected_at, last_sync) VALUES (?,?,?,?,?,?)",
@@ -1426,6 +1442,23 @@ async def delete_template(id: int, user=Depends(require_user)):
 
 # ---- AI
 
+EMOJI_RE = re.compile("[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F000-\U0001F02F]")
+
+def apply_brand_voice(content, voice):
+    if not isinstance(voice, dict):
+        return content
+    for w in (voice.get("avoid") or []):
+        w = w.strip()
+        if w:
+            content = re.sub(r"(?i)\b%s\b" % re.escape(w), "", content)
+    content = re.sub(r" {2,}", " ", content).replace(" .", ".").replace(" ,", ",").strip()
+    if voice.get("emoji") is False:
+        content = EMOJI_RE.sub("", content)
+    sig = (voice.get("signature") or "").strip()
+    if sig and sig.lower() not in content.lower():
+        content = content.rstrip() + "\n\n" + sig
+    return content
+
 @app.post("/api/ai/generate")
 async def generate(request: Request, user=Depends(require_user)):
     body = await read_json(request)
@@ -1442,6 +1475,11 @@ async def generate(request: Request, user=Depends(require_user)):
         if u["ai_credits_used"] >= limit:
             raise HTTPException(402, "You're out of AI credits. Upgrade your plan to keep generating.")
         content, tags, best_time, confidence = ai_generate(topic, tone, plats, length)
+        try:
+            voice = json.loads(u["prefs"] or "{}").get("brandVoice") or {}
+        except ValueError:
+            voice = {}
+        content = apply_brand_voice(content, voice)
         conn.execute("UPDATE users SET ai_credits_used = ai_credits_used + ? WHERE id=?", (CREDIT_COST, user["id"]))
         conn.execute("INSERT INTO generations (user_id, topic, tone, platforms, content, hashtags, created_at) VALUES (?,?,?,?,?,?,?)",
                      (user["id"], topic, tone, json.dumps(plats), content, json.dumps(tags), now_iso()))
@@ -1508,12 +1546,126 @@ async def rewrite(request: Request, user=Depends(require_user)):
         if u["ai_credits_used"] + REWRITE_COST > limit:
             raise HTTPException(402, "Not enough AI credits for a rewrite. Upgrade your plan.")
         result = ai_rewrite(content, action)
+        try:
+            voice = json.loads(u["prefs"] or "{}").get("brandVoice") or {}
+        except ValueError:
+            voice = {}
+        if action in ("improve", "expand"):
+            result = apply_brand_voice(result, voice)
         conn.execute("UPDATE users SET ai_credits_used = ai_credits_used + ? WHERE id=?", (REWRITE_COST, user["id"]))
         conn.commit()
         used = conn.execute("SELECT ai_credits_used FROM users WHERE id=?", (user["id"],)).fetchone()["ai_credits_used"]
     log_activity(user["id"], "ai", f"AI rewrite applied ({action})")
     return {"content": result, "action": action,
             "credits_used": REWRITE_COST, "credits_left": limit - used}
+
+# ---- quick replies
+
+@app.get("/api/quick-replies")
+async def list_quick_replies(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM quick_replies WHERE user_id=? ORDER BY id", (user["id"],)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/quick-replies")
+async def create_quick_reply(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    title = (body.get("title") or "").strip()
+    text = (body.get("body") or "").strip()
+    if not title or not text:
+        raise HTTPException(400, "Give the snippet a name and text")
+    with closing(db()) as conn:
+        cur = conn.execute("INSERT INTO quick_replies (user_id, title, body, created_at) VALUES (?,?,?,?)",
+                           (user["id"], title, text, now_iso()))
+        conn.commit()
+        row = conn.execute("SELECT * FROM quick_replies WHERE id=?", (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+@app.delete("/api/quick-replies/{id}")
+async def delete_quick_reply(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "quick_replies", id, user["id"])
+        conn.execute("DELETE FROM quick_replies WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
+
+# ---- competitor battle
+
+BATTLE_COST = 5
+
+@app.post("/api/competitors/{id}/battle")
+async def battle_competitor(id: int, user=Depends(require_user)):
+    await asyncio.sleep(random.uniform(1.6, 2.4))  # simulated deep analysis
+    with closing(db()) as conn:
+        comp = own(conn, "competitors", id, user["id"])
+        u = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        limit = PLAN_LIMITS.get(u["plan"], 500)
+        if u["ai_credits_used"] + BATTLE_COST > limit:
+            raise HTTPException(402, "Not enough AI credits for a battle report. Upgrade your plan.")
+        mine = conn.execute(
+            "SELECT reach, engagement, followers FROM analytics WHERE user_id=? AND date>=? ORDER BY date",
+            (user["id"], day_iso(-29))).fetchall()
+        conn.execute("UPDATE users SET ai_credits_used = ai_credits_used + ? WHERE id=?", (BATTLE_COST, user["id"]))
+        conn.commit()
+        used = conn.execute("SELECT ai_credits_used FROM users WHERE id=?", (user["id"],)).fetchone()["ai_credits_used"]
+    my_followers = mine[-1]["followers"] if mine else 0
+    my_eng = round(sum(r["engagement"] for r in mine) / len(mine), 2) if mine else 0.0
+    my_growth = round((mine[-1]["followers"] - mine[0]["followers"]) / max(1, mine[0]["followers"]) * 100, 1) if len(mine) > 1 else 0.0
+    rows = [
+        {"metric": "Followers", "you": my_followers, "them": comp["followers"],
+         "winner": "you" if my_followers >= comp["followers"] else "them", "fmt": "num"},
+        {"metric": "30-day growth", "you": my_growth, "them": comp["growth"],
+         "winner": "you" if my_growth >= comp["growth"] else "them", "fmt": "pct"},
+        {"metric": "Engagement rate", "you": my_eng, "them": comp["engagement"],
+         "winner": "you" if my_eng >= comp["engagement"] else "them", "fmt": "pct"},
+    ]
+    you_won = sum(1 for r in rows if r["winner"] == "you")
+    rng = random.Random(f"{user['id']}-{id}-{day_iso(0)}")
+    advice_pool = [
+        f"{comp['name']} leans hard on {PLATFORMS.get(comp['platform'], {}).get('name', 'their')} video content — a consistent series could claw back attention.",
+        "Their posting cadence dips on weekends; that's your opening to own the feed.",
+        "Double down on your top-performing format this month while their growth cools.",
+        "Run an A/B experiment on your hook style — engagement is the battlefield you can win fastest.",
+    ]
+    verdict = ("You're ahead on most fronts. Keep the pressure on and protect your engagement lead."
+               if you_won >= 2 else
+               f"{comp['name']} currently has the edge. Targeted moves below can flip the balance.")
+    log_activity(user["id"], "report", f"Battle report vs {comp['name']}: {'won' if you_won >= 2 else 'behind'} on {you_won}/3 metrics")
+    return {"competitor": comp["name"], "handle": comp["handle"], "platform": comp["platform"],
+            "rows": rows, "score": f"{you_won}/3", "leading": you_won >= 2,
+            "verdict": verdict, "advice": rng.sample(advice_pool, 2),
+            "credits_used": BATTLE_COST, "credits_left": limit - used}
+
+# ---- schedule conflict check
+
+@app.post("/api/posts/check-conflict")
+async def check_conflict(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    when = (body.get("scheduled_at") or "").replace("T", " ")[:16]
+    plats = body.get("platforms") or []
+    exclude = body.get("exclude_id")
+    if not when or not plats:
+        return {"conflicts": []}
+    try:
+        at = dt.datetime.strptime(when, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return {"conflicts": []}
+    lo = (at - dt.timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M")
+    hi = (at + dt.timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M")
+    with closing(db()) as conn:
+        rows = conn.execute(
+            "SELECT id, content, platforms, scheduled_at FROM posts WHERE user_id=? AND status='scheduled' AND scheduled_at IS NOT NULL"
+            " AND replace(scheduled_at,'T',' ') >= ? AND replace(scheduled_at,'T',' ') <= ?",
+            (user["id"], lo, hi)).fetchall()
+    conflicts = []
+    for r in rows:
+        if exclude and r["id"] == exclude:
+            continue
+        rp = json.loads(r["platforms"] or "[]")
+        shared = [p for p in rp if p in plats]
+        if shared:
+            conflicts.append({"id": r["id"], "content": r["content"], "platforms": shared, "scheduled_at": r["scheduled_at"]})
+    return {"conflicts": conflicts}
 
 # ---- trends
 
@@ -1953,7 +2105,7 @@ async def reset_workspace(request: Request, user=Depends(require_user)):
     uid = user["id"]
     tables = ["accounts", "posts", "campaigns", "analytics", "templates", "generations", "activity",
               "conversations", "team_members", "media", "invoices", "competitors", "reports", "keywords",
-              "post_versions", "integrations", "ab_tests", "webhook_events"]
+              "post_versions", "integrations", "ab_tests", "webhook_events", "quick_replies"]
     with closing(db()) as conn:
         for t in tables:
             conn.execute(f"DELETE FROM {t} WHERE user_id=?", (uid,))
