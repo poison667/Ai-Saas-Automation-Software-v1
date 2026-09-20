@@ -374,6 +374,7 @@ const NAV = [
   { section: "Create" },
   { id: "generator", label: "AI Generator", icon: "sparkles" },
   { id: "ideas", label: "Content Ideas", icon: "zap" },
+  { id: "trends", label: "Trends", icon: "trendUp" },
   { id: "posts", label: "Posts", icon: "inbox" },
   { id: "approvals", label: "Approvals", icon: "check", badge: "approvals" },
   { id: "experiments", label: "Experiments", icon: "flask" },
@@ -603,6 +604,14 @@ async function openPostModal(post, prefill = {}) {
         <label>Content</label>
         <textarea class="input" id="pm-content" rows="6" placeholder="What do you want to say?">${esc(p.content)}</textarea>
         <div class="char-count"><span id="pm-count">${p.content.length}</span> characters</div>
+        <div class="chip-row" id="pm-rewrite" style="margin-top:8px">
+          <span class="faint" style="font-size:11.5px;align-self:center">${icon("sparkles", 12)} AI rewrite (2 cr):</span>
+          <span class="chip" data-rw="improve">✨ Improve</span>
+          <span class="chip" data-rw="shorten">✂ Shorten</span>
+          <span class="chip" data-rw="expand">⤢ Expand</span>
+          <span class="chip" data-rw="hashtags"># Hashtags</span>
+          <span class="chip" data-rw="emoji">😊 Emoji</span>
+        </div>
       </div>
       <div class="field">
         <label>Platforms</label>
@@ -652,6 +661,24 @@ async function openPostModal(post, prefill = {}) {
   });
   const ta = m.el.querySelector("#pm-content");
   ta.addEventListener("input", () => { m.el.querySelector("#pm-count").textContent = ta.value.length; });
+
+  // AI rewrite chips
+  m.el.querySelectorAll("#pm-rewrite .chip[data-rw]").forEach(chip => {
+    chip.onclick = async () => {
+      if (!ta.value.trim()) { toast("Write something first", { type: "info" }); return; }
+      const orig = chip.textContent;
+      chip.classList.add("active"); chip.style.pointerEvents = "none"; chip.textContent = "Rewriting…";
+      try {
+        const res = await api("/api/ai/rewrite", { method: "POST", body: { content: ta.value, action: chip.dataset.rw } });
+        ta.value = res.content;
+        m.el.querySelector("#pm-count").textContent = ta.value.length;
+        state.user.ai_credits_used = (state.user.credits_limit || 0) - res.credits_left;
+        toast(`Rewritten — ${res.credits_left} credits left`);
+        updateCreditsPill();
+      } catch (e) { toast(e.message, { type: "error" }); }
+      chip.textContent = orig; chip.classList.remove("active"); chip.style.pointerEvents = "";
+    };
+  });
 
   // UTM builder
   const utmHead = m.el.querySelector("#utm-toggle");
@@ -873,6 +900,17 @@ function openPalette() {
 document.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (state.user) openPalette(); }
 });
+
+function updateCreditsPill() {
+  if (!state.user) return;
+  const el = document.querySelector(".credits-pill");
+  if (el) {
+    const left = (state.user.credits_limit || 0) - (state.user.ai_credits_used || 0);
+    el.innerHTML = `${icon("zap", 13)} ${left} credits`;
+  }
+  const up = document.querySelector(".upgrade-card p");
+  if (up) up.textContent = `${(state.user.credits_limit || 0) - (state.user.ai_credits_used || 0)} AI credits left this month`;
+}
 
 /* ---------------- role preview ---------------- */
 const ROLE_PERMS = {

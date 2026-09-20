@@ -29,6 +29,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 COOKIE = "lumina_auth"
 SESSION_DAYS = 30
 CREDIT_COST = 10
+REWRITE_COST = 2
 PLAN_LIMITS = {"Starter": 60, "Pro": 500, "Scale": 2000}
 
 PLATFORMS = {
@@ -1003,6 +1004,19 @@ async def dashboard(user=Depends(require_user)):
         acts = [dict(r) for r in conn.execute(
             "SELECT type, message, created_at FROM activity WHERE user_id=? ORDER BY datetime(created_at) DESC LIMIT 8", (uid,))]
         active_campaigns = conn.execute("SELECT COUNT(*) c FROM campaigns WHERE user_id=? AND status='active'", (uid,)).fetchone()["c"]
+        # month-to-date stats + goals
+        month_start = dt.date.today().replace(day=1).strftime("%Y-%m-%d")
+        m_rows = conn.execute("SELECT date, reach, engagement FROM analytics WHERE user_id=? AND date>=?", (uid, month_start)).fetchall()
+        month_reach = sum(r["reach"] for r in m_rows)
+        month_eng = round(sum(r["engagement"] for r in m_rows) / len(m_rows), 2) if m_rows else 0.0
+        month_posts = conn.execute(
+            "SELECT COUNT(*) c FROM posts WHERE user_id=? AND status='published' AND published_at IS NOT NULL AND substr(published_at,1,10)>=?",
+            (uid, month_start)).fetchone()["c"]
+        urow = conn.execute("SELECT prefs FROM users WHERE id=?", (uid,)).fetchone()
+        try:
+            goals = json.loads(urow["prefs"] or "{}").get("goals") or {}
+        except (ValueError, TypeError):
+            goals = {}
     platform_split = {}
     for a in accounts:
         if a["status"] == "connected":
@@ -1021,6 +1035,8 @@ async def dashboard(user=Depends(require_user)):
         "upcoming": upcoming,
         "top_posts": top,
         "activity": acts,
+        "month": {"reach": month_reach, "posts": month_posts, "engagement": month_eng},
+        "goals": goals,
         "now": now_iso(),
     }
 
@@ -1434,6 +1450,134 @@ async def generate(request: Request, user=Depends(require_user)):
     log_activity(user["id"], "ai", f"AI draft generated for “{topic[:48]}”")
     return {"content": content, "hashtags": tags, "best_time": best_time, "confidence": confidence,
             "credits_used": CREDIT_COST, "credits_left": limit - used}
+
+# ---- AI rewrite
+
+REWRITE_STOP = {"the","and","with","this","that","your","you","are","for","from","have","has","our","we","will","just","into","about","more","what","when","how","why","its","it's","get","can","all","new","now"}
+
+def ai_rewrite(content, action):
+    rng = random.Random(hashlib.sha256(content.encode()).hexdigest())
+    c = content.strip()
+    words = [w.strip(".,!?():;\"'") for w in c.lower().split()]
+    keyws = [w for w in words if len(w) > 3 and w.isalpha() and w not in REWRITE_STOP][:6]
+    if action == "shorten":
+        cut = max(20, int(len(c) * 0.6))
+        s = c[:cut]
+        if "." in s: s = s[:s.rfind(".") + 1]
+        return s.strip()
+    if action == "expand":
+        tail = rng.choice([
+            " Here's why it matters: small, consistent wins compound faster than one big splash.",
+            " We broke it down step by step so your team can repeat it tomorrow morning.",
+            " The numbers back it up — and the trend is still climbing this week.",
+            " Save this one: it's the kind of detail your competitors will copy next month.",
+        ])
+        return c + tail
+    if action == "improve":
+        hook = rng.choice(["Stop scrolling — ", "Real talk: ", "Here's what nobody tells you: ", "Quick win alert: "])
+        body = c[0].lower() + c[1:] if len(c) > 1 and c[0].isupper() and not c.startswith(("http", "#")) else c
+        return hook + body
+    if action == "hashtags":
+        base = [w.capitalize() for w in keyws[:4]]
+        pool = ["SocialMedia", "Marketing", "Growth", "ContentStrategy", "BrandBuilding", "DigitalMarketing", "Community", "Trending"]
+        rng.shuffle(pool)
+        tags = base + pool[: max(2, 6 - len(base))]
+        return c + "\n\n" + " ".join("#" + t.replace(" ", "") for t in tags)
+    if action == "emoji":
+        em = rng.sample(["🚀", "✨", "🔥", "💡", "📈", "🎯", "⚡", "🙌"], 3)
+        sents = [s.strip() for s in c.replace("!", ".").split(".") if s.strip()]
+        out = []
+        for i, s in enumerate(sents):
+            out.append(s + ("!" if rng.random() < 0.5 else ".") + " " + em[i % len(em)])
+        return " ".join(out).strip()
+    raise HTTPException(400, "Unknown rewrite action")
+
+@app.post("/api/ai/rewrite")
+async def rewrite(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    content = (body.get("content") or "").strip()
+    action = body.get("action") or ""
+    if not content:
+        raise HTTPException(400, "Write something first")
+    if action not in ("shorten", "expand", "improve", "hashtags", "emoji"):
+        raise HTTPException(400, "Unknown rewrite action")
+    await asyncio.sleep(random.uniform(0.9, 1.6))  # simulated model latency
+    with closing(db()) as conn:
+        u = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        limit = PLAN_LIMITS.get(u["plan"], 500)
+        if u["ai_credits_used"] + REWRITE_COST > limit:
+            raise HTTPException(402, "Not enough AI credits for a rewrite. Upgrade your plan.")
+        result = ai_rewrite(content, action)
+        conn.execute("UPDATE users SET ai_credits_used = ai_credits_used + ? WHERE id=?", (REWRITE_COST, user["id"]))
+        conn.commit()
+        used = conn.execute("SELECT ai_credits_used FROM users WHERE id=?", (user["id"],)).fetchone()["ai_credits_used"]
+    log_activity(user["id"], "ai", f"AI rewrite applied ({action})")
+    return {"content": result, "action": action,
+            "credits_used": REWRITE_COST, "credits_left": limit - used}
+
+# ---- trends
+
+TREND_POOLS = {
+    "instagram": ["reels", "behindthescenes", "carousel", "photodump", "aesthetic", "creatorlife", "goldenhour", "moodboard", "storytime", "grwm", "flatlay", "viralreels"],
+    "twitter": ["buildinpublic", "technews", "startuplife", "aitools", "devlife", "producthunt", "indiehackers", "saas", "growthhacking", "remotework", "founders", "openai"],
+    "linkedin": ["leadership", "futureofwork", "b2b", "careergrowth", "thoughtleadership", "hiring", "personalbranding", "salesstrategy", "innovation", "networking", "upskilling", "companyculture"],
+    "facebook": ["community", "smallbusiness", "locallove", "familyowned", "giveaway", "livestream", "customerstories", "weekendvibes", "supportlocal", "flashsale", "behindthescenes", "event"],
+    "tiktok": ["fyp", "duet", "trendalert", "pov", "dayinmylife", "tutorial", "lifehack", "storytime", "greenscreen", "capcut", "viralvideo", "comedy"],
+    "youtube": ["shorts", "tutorial", "howto", "review", "unboxing", "vlog", "creator", "subscriber", "deepdive", "explained", "top10", "documentary"],
+}
+
+@app.get("/api/trends")
+async def trends(platform: str = "instagram", user=Depends(require_user)):
+    await jitter(0.2, 0.5)
+    pool = TREND_POOLS.get(platform, TREND_POOLS["instagram"])
+    seed_key = f"{platform}-{day_iso(0)}"
+    rng = random.Random(hashlib.sha256(seed_key.encode()).hexdigest())
+    s_rng = random.Random(seed_key + "-series")
+    tags = pool[:]
+    rng.shuffle(tags)
+    out = []
+    for i, t in enumerate(tags[:12]):
+        vol = rng.randint(90, 2400) * 1000
+        growth = rng.randint(-18, 85)
+        sentiment = rng.choices(["positive", "neutral", "negative"], weights=[62, 30, 8])[0]
+        series = []
+        v = vol / rng.uniform(1.4, 2.6)
+        for _ in range(14):
+            v = max(1000, v * rng.uniform(0.9, 1.0 + max(0.02, growth / 400)))
+            series.append(int(v))
+        out.append({"tag": t, "volume": vol, "growth": growth, "sentiment": sentiment,
+                    "score": round(min(100, vol / 25000 + max(0, growth)), 1), "series": series})
+    out.sort(key=lambda x: x["score"], reverse=True)
+    return {"platform": platform, "trends": out, "as_of": now_iso()}
+
+# ---- posting heatmap
+
+@app.get("/api/heatmap")
+async def heatmap(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT published_at FROM posts WHERE user_id=? AND status='published' AND published_at IS NOT NULL",
+                            (user["id"],)).fetchall()
+    days = {}
+    for r in rows:
+        d = (r["published_at"] or "")[:10]
+        if d: days[d] = days.get(d, 0) + 1
+    start = dt.date.today() - dt.timedelta(days=83)
+    grid = {}
+    for i in range(84):
+        grid[(start + dt.timedelta(days=i)).strftime("%Y-%m-%d")] = 0
+    for d, n in days.items():
+        if d in grid: grid[d] = n
+    return {"days": grid, "streak": _streak(grid)}
+
+def _streak(grid):
+    streak = 0
+    today = dt.date.today()
+    for i in range(84):
+        d = (today - dt.timedelta(days=i)).strftime("%Y-%m-%d")
+        if grid.get(d, 0) > 0: streak += 1
+        elif i == 0: continue  # today may not have a post yet
+        else: break
+    return streak
 
 @app.get("/api/generations")
 async def generations(user=Depends(require_user)):

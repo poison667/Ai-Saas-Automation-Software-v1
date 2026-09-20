@@ -156,6 +156,8 @@ ROUTES.dashboard = {
         </div>
         <div class="stack">
           <div class="card"><h3>Upcoming posts</h3><div class="card-sub">Next out the door</div><div id="dash-upcoming">${skeletonTable(3)}</div></div>
+          <div class="card"><h3 style="display:flex;align-items:center;gap:8px">Monthly goals <span style="flex:1"></span><button class="btn sm" id="goals-edit">${icon("edit", 12)} Set goals</button></h3><div class="card-sub">Month to date vs your targets</div><div id="dash-goals"><div class="skel skel-block" style="height:90px"></div></div></div>
+          <div class="card"><h3>Posting rhythm</h3><div class="card-sub">Published days — last 12 weeks</div><div id="dash-heat"><div class="skel skel-block" style="height:90px"></div></div></div>
           <div class="card"><h3>Top performers</h3><div class="card-sub">Published posts, ranked</div><div id="dash-top">${skeletonTable(3)}</div></div>
         </div>
       </div>`;
@@ -218,11 +220,93 @@ ROUTES.dashboard = {
 
     const np = document.getElementById("dash-new-post");
     if (np) np.onclick = () => openPostModal(null, {});
+
+    // monthly goals
+    renderGoals(d);
+    document.getElementById("goals-edit").onclick = () => openGoalsModal(d.goals || {});
+
+    // posting heatmap
+    api("/api/heatmap").then(h => renderHeatmap(h)).catch(() => {});
+
     page.querySelectorAll("[data-open-post]").forEach(el => {
       el.onclick = () => location.hash = "#/posts";
     });
   },
 };
+
+/* ---------------- monthly goals ---------------- */
+function renderGoals(d) {
+  const box = document.getElementById("dash-goals");
+  if (!box) return;
+  const g = d.goals || {};
+  if (!g.reach && !g.posts && !g.engagement) {
+    box.innerHTML = `<p class="muted" style="font-size:12.5px">No targets set yet. Define monthly reach, post and engagement goals to track momentum here.</p>`;
+    return;
+  }
+  const m = d.month || { reach: 0, posts: 0, engagement: 0 };
+  const rows = [];
+  if (g.reach) rows.push({ label: "Reach", cur: m.reach, tgt: g.reach, fmt: fmtNum });
+  if (g.posts) rows.push({ label: "Posts published", cur: m.posts, tgt: g.posts, fmt: x => x });
+  if (g.engagement) rows.push({ label: "Engagement rate", cur: m.engagement, tgt: g.engagement, fmt: x => x + "%" });
+  box.innerHTML = rows.map(r => {
+    const pct = Math.min(100, Math.round((r.cur / r.tgt) * 100));
+    const done = pct >= 100;
+    return `
+      <div style="margin-bottom:11px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">
+          <span class="muted">${r.label}</span>
+          <span style="font-weight:600;color:${done ? "#34d399" : "var(--text)"}">${done ? icon("check", 11) + " " : ""}${r.fmt(r.cur)} / ${r.fmt(r.tgt)}</span>
+        </div>
+        <div class="progress"><div class="bar" style="width:${Math.max(2, pct)}%;background:${done ? "linear-gradient(135deg,#34d399,#22d3ee)" : "var(--grad)"}"></div></div>
+      </div>`;
+  }).join("");
+}
+
+function openGoalsModal(goals) {
+  const m = openModal({
+    title: "Monthly goals",
+    body: `
+      <p class="faint" style="font-size:12px;margin-bottom:12px">Leave a field at 0 to stop tracking that goal.</p>
+      <div class="field"><label>Reach target (this month)</label><input class="input" id="goal-reach" type="number" min="0" value="${goals.reach || 0}"></div>
+      <div class="field"><label>Posts to publish</label><input class="input" id="goal-posts" type="number" min="0" value="${goals.posts || 0}"></div>
+      <div class="field"><label>Engagement rate target (%)</label><input class="input" id="goal-eng" type="number" min="0" step="0.1" value="${goals.engagement || 0}"></div>`,
+    foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="goals-save">${icon("check", 14)} Save goals</button>`,
+  });
+  m.el.querySelector("#goals-save").onclick = async () => {
+    const g = {
+      reach: +m.el.querySelector("#goal-reach").value || 0,
+      posts: +m.el.querySelector("#goal-posts").value || 0,
+      engagement: +m.el.querySelector("#goal-eng").value || 0,
+    };
+    buttonLoading(m.el.querySelector("#goals-save"), true);
+    try {
+      await api("/api/me", { method: "PATCH", body: { prefs: { goals: g } } });
+      if (state.user) { state.user.prefs = state.user.prefs || {}; state.user.prefs.goals = g; }
+      m.close();
+      toast("Goals saved 🎯");
+      refreshCurrentList ? ROUTES.dashboard.render(document.getElementById("page")) : null;
+    } catch (e) { toast(e.message, { type: "error" }); buttonLoading(m.el.querySelector("#goals-save"), false); }
+  };
+}
+
+/* ---------------- posting heatmap ---------------- */
+function renderHeatmap(h) {
+  const box = document.getElementById("dash-heat");
+  if (!box) return;
+  const days = Object.entries(h.days); // ["2026-07-01", n] ascending
+  const shade = n => n === 0 ? "var(--panel-3)" : n === 1 ? "rgba(139,92,246,.35)" : n === 2 ? "rgba(139,92,246,.6)" : n === 3 ? "rgba(139,92,246,.85)" : "#d946ef";
+  const cells = days.map(([date, n]) =>
+    `<div title="${date}: ${n} post${n === 1 ? "" : "s"}" style="width:11px;height:11px;border-radius:2.5px;background:${shade(n)}"></div>`).join("");
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span class="badge purple">${icon("zap", 11)} ${h.streak}-day streak</span>
+      <span class="faint" style="font-size:11px">${days.reduce((a, [, n]) => a + n, 0)} posts in 12 weeks</span>
+    </div>
+    <div style="display:grid;grid-template-rows:repeat(7,11px);grid-auto-flow:column;grid-auto-columns:11px;gap:3px;overflow-x:auto;padding-bottom:4px">${cells}</div>
+    <div style="display:flex;align-items:center;gap:5px;margin-top:9px;font-size:10.5px;color:var(--faint)">
+      Less ${[0, 1, 2, 3, 4].map(n => `<span style="width:9px;height:9px;border-radius:2px;background:${shade(n)}"></span>`).join("")} More
+    </div>`;
+}
 
 /* ============================================================ AI GENERATOR */
 const GEN_STATUSES = ["Analyzing your topic…", "Matching tone and platform voice…", "Drafting hooks and CTAs…", "Selecting hashtag mix…"];
