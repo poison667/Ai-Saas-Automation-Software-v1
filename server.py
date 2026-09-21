@@ -239,6 +239,19 @@ CREATE TABLE IF NOT EXISTS deals (
   deal_date TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS client_invoices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  number TEXT NOT NULL,
+  client TEXT NOT NULL,
+  items TEXT NOT NULL DEFAULT '[]',
+  currency TEXT NOT NULL DEFAULT '$',
+  issue_date TEXT NOT NULL,
+  due_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS quick_replies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
@@ -881,6 +894,21 @@ def seed_demo(conn):
         conn.execute("INSERT INTO deals (user_id, brand, type, platform, amount, status, notes, deal_date, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
                      (uid, brand, typ, plat, amt, status, notes, day_iso(off), day_iso(off)))
     _ = deal_rng
+
+    # ---- client invoices ----
+    inv_seed = [
+        ("INV-2026-001", "Brewline Coffee", [("2 sponsored posts", 300.0), ("3 story frames", 150.0)], "paid", -50, -36),
+        ("INV-2026-002", "FitKit Apparel", [("TikTok video (30-day usage)", 600.0)], "paid", -40, -26),
+        ("INV-2026-003", "Nordbeam Audio", [("YouTube 60s integrated spot", 950.0)], "paid", -22, -8),
+        ("INV-2026-004", "GlowDesk", [("Affiliate content pack", 130.0)], "paid", -15, -1),
+        ("INV-2026-005", "Stackwise", [("2 LinkedIn carousels", 700.0)], "sent", -4, 10),
+        ("INV-2026-006", "Pixel Pantry", [("Template launch feature", 210.0)], "sent", -24, -10),
+        ("INV-2026-007", "Craftfolio", [("Monthly affiliate retainer", 90.0)], "draft", 0, 14),
+    ]
+    for num, client, items, status, issued, due in inv_seed:
+        conn.execute("INSERT INTO client_invoices (user_id, number, client, items, currency, issue_date, due_date, status, notes, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     (uid, num, client, json.dumps([{"description": d, "amount": a} for d, a in items]), "$",
+                      day_iso(issued), day_iso(due), status, "Payment via bank transfer — net 14.", day_iso(issued)))
 
     # ---- quick replies ----
     for title, body in (
@@ -1879,6 +1907,142 @@ async def ai_launchkit_endpoint(request: Request, user=Depends(require_user)):
     log_activity(user["id"], "ai", f"Launch kit generated for “{niche[:48]}”")
     return {**result, "credits_used": KIT_COST, "credits_left": limit - used}
 
+
+# ---- client invoices
+
+INVOICE_STATUSES = ("draft", "sent", "paid", "overdue")
+
+def _invoice_row(conn, row_id):
+    r = conn.execute("SELECT * FROM client_invoices WHERE id=?", (row_id,)).fetchone()
+    d = dict(r)
+    try:
+        d["items"] = json.loads(d.get("items") or "[]")
+    except json.JSONDecodeError:
+        d["items"] = []
+    d["total"] = sum(max(0.0, float(it.get("amount") or 0)) for it in d["items"])
+    return d
+
+@app.get("/api/client-invoices")
+async def list_client_invoices(user=Depends(require_user)):
+    await jitter(0.1, 0.3)
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM client_invoices WHERE user_id=? ORDER BY date(issue_date) DESC, id DESC",
+                            (user["id"],)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["items"] = json.loads(d.get("items") or "[]")
+        except json.JSONDecodeError:
+            d["items"] = []
+        d["total"] = sum(max(0.0, float(it.get("amount") or 0)) for it in d["items"])
+        out.append(d)
+    return out
+
+@app.post("/api/client-invoices")
+async def create_client_invoice(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    client = (body.get("client") or "").strip()
+    if not client:
+        raise HTTPException(400, "Give the invoice a client name")
+    items = body.get("items") or []
+    clean = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        desc = (it.get("description") or "").strip()
+        try:
+            amt = max(0.0, float(it.get("amount") or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Invoice line amounts must be numbers")
+        if desc or amt:
+            clean.append({"description": desc or "Service", "amount": amt})
+    if not clean:
+        raise HTTPException(400, "Add at least one line item to the invoice")
+    status = body.get("status") if body.get("status") in INVOICE_STATUSES else "draft"
+    issue_date = str(body.get("issue_date") or day_iso(0))[:10]
+    due_date = str(body.get("due_date") or day_iso(14))[:10]
+    with closing(db()) as conn:
+        n = conn.execute("SELECT COUNT(*) c FROM client_invoices WHERE user_id=?", (user["id"],)).fetchone()["c"]
+        number = f"INV-{dt.date.today().year}-{n + 1:03d}"
+        cur = conn.execute(
+            "INSERT INTO client_invoices (user_id, number, client, items, currency, issue_date, due_date, status, notes, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (user["id"], number, client, json.dumps(clean), (body.get("currency") or "$")[:3],
+             issue_date, due_date, status, (body.get("notes") or "").strip(), now_iso()))
+        conn.commit()
+        out = _invoice_row(conn, cur.lastrowid)
+    log_activity(user["id"], "milestone", f"Invoice {number} created for {client} ({out['currency']}{out['total']:,.0f})")
+    return out
+
+@app.patch("/api/client-invoices/{id}")
+async def update_client_invoice(id: int, request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    with closing(db()) as conn:
+        row = own(conn, "client_invoices", id, user["id"])
+        d = dict(row)
+        try:
+            d["items"] = json.loads(d.get("items") or "[]")
+        except json.JSONDecodeError:
+            d["items"] = []
+        if body.get("client") and str(body["client"]).strip(): d["client"] = str(body["client"]).strip()
+        if body.get("notes") is not None: d["notes"] = str(body["notes"]).strip()
+        if body.get("currency"): d["currency"] = str(body["currency"])[:3]
+        if body.get("status") in INVOICE_STATUSES: d["status"] = body["status"]
+        if body.get("issue_date"): d["issue_date"] = str(body["issue_date"])[:10]
+        if body.get("due_date"): d["due_date"] = str(body["due_date"])[:10]
+        if body.get("items") is not None:
+            clean = []
+            for it in body["items"]:
+                if not isinstance(it, dict):
+                    continue
+                desc = (it.get("description") or "").strip()
+                try:
+                    amt = max(0.0, float(it.get("amount") or 0))
+                except (TypeError, ValueError):
+                    raise HTTPException(400, "Invoice line amounts must be numbers")
+                if desc or amt:
+                    clean.append({"description": desc or "Service", "amount": amt})
+            if clean:
+                d["items"] = clean
+        conn.execute("UPDATE client_invoices SET client=?, items=?, currency=?, issue_date=?, due_date=?, status=?, notes=? WHERE id=?",
+                     (d["client"], json.dumps(d["items"]), d["currency"], d["issue_date"], d["due_date"], d["status"], d["notes"], id))
+        conn.commit()
+        out = _invoice_row(conn, id)
+    if body.get("status") == "paid":
+        log_activity(user["id"], "milestone", f"Invoice {out['number']} paid - {out['currency']}{out['total']:,.0f}")
+    return out
+
+@app.delete("/api/client-invoices/{id}")
+async def delete_client_invoice(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "client_invoices", id, user["id"])
+        conn.execute("DELETE FROM client_invoices WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.get("/api/client-invoices/summary")
+async def client_invoices_summary(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM client_invoices WHERE user_id=?", (user["id"],)).fetchall()
+    today = day_iso(0)
+    month_start = dt.date.today().replace(day=1).strftime("%Y-%m-%d")
+    invs = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["items"] = json.loads(d.get("items") or "[]")
+        except json.JSONDecodeError:
+            d["items"] = []
+        d["total"] = sum(max(0.0, float(it.get("amount") or 0)) for it in d["items"])
+        invs.append(d)
+    paid = [i for i in invs if i["status"] == "paid"]
+    outstanding = [i for i in invs if i["status"] in ("sent", "overdue")]
+    overdue = [i for i in invs if i["status"] == "overdue" or (i["status"] == "sent" and i["due_date"] < today)]
+    return {"outstanding": sum(i["total"] for i in outstanding),
+            "paid_month": sum(i["total"] for i in paid if i["issue_date"] >= month_start),
+            "paid_year": sum(i["total"] for i in paid if i["issue_date"][:4] == str(dt.date.today().year)),
+            "overdue": len(overdue), "count": len(invs)}
+
 # ---- brand outreach AI
 
 PITCH_ANGLES = {
@@ -2833,7 +2997,7 @@ async def reset_workspace(request: Request, user=Depends(require_user)):
     uid = user["id"]
     tables = ["accounts", "posts", "campaigns", "analytics", "templates", "generations", "activity",
               "conversations", "team_members", "media", "invoices", "competitors", "reports", "keywords",
-              "post_versions", "integrations", "ab_tests", "webhook_events", "quick_replies", "deals"]
+              "post_versions", "integrations", "ab_tests", "webhook_events", "quick_replies", "deals", "client_invoices"]
     with closing(db()) as conn:
         for t in tables:
             conn.execute(f"DELETE FROM {t} WHERE user_id=?", (uid,))

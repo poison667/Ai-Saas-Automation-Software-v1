@@ -68,6 +68,15 @@ approval from teammates), 4 campaigns, 9 inbox messages, 4 teammates, 6 media as
 5 invoices, 3 competitors, 3 tracked keywords, 3 weekly reports and 180 days of analytics.
 New registrations start empty to demonstrate every empty state.
 
+## Invoice Studio (v2.5)
+
+Close the money loop: proposal → won deal → invoice.
+
+- **Client invoices** — auto-numbered per year (INV-YYYY-NNN), with line items, currency, issue/due dates and notes.
+- **Import from a won deal** — one click prefills the client and amount from your Revenue pipeline.
+- **Status tracking** — draft → sent → paid / overdue, with a summary of what's outstanding, paid this month/year, and what's overdue.
+- **Copy as text or download a styled HTML invoice** to send to the client.
+
 ## Services Studio (v2.4)
 
 Turn the social-media service catalogue into a sellable business.
