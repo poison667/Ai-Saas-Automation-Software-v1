@@ -68,6 +68,12 @@ approval from teammates), 4 campaigns, 9 inbox messages, 4 teammates, 6 media as
 5 invoices, 3 competitors, 3 tracked keywords, 3 weekly reports and 180 days of analytics.
 New registrations start empty to demonstrate every empty state.
 
+## Zero-config Local AI (v3.2)
+
+- **Auto-detection**: if Ollama is running on the computer, Lumina finds it and uses it automatically for every AI feature — no provider picking, no API key, no setup.
+- `/api/ai/engine` reports `autoLocal` (found / model / model list); `/api/ai/local/setup` triggers a one-click background model download (llama3.2 default).
+- With no local AI and no key, the built-in assistant now gives **topic-aware answers** (growth / pricing / content / engagement / clients / hooks) that rotate, instead of one repeated response.
+
 ## Real Business Core (v3.1)
 
 Real, empty-by-default working tools — no demo filler in these:

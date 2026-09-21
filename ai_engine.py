@@ -14,6 +14,7 @@ is configured AND reachable, generation uses it; otherwise it transparently
 falls back to the built-in simulated engine so nothing ever breaks.
 """
 import json
+import time
 import httpx
 
 DEFAULT_OLLAMA = "http://localhost:11434"
@@ -165,3 +166,39 @@ async def test_connection(user_prefs):
         return {"ok": False, "message": str(e)}
     except Exception as e:
         return {"ok": False, "message": f"Unexpected: {e}"}
+
+
+# ---- Local Ollama auto-detection (v3.2: zero-config local AI) ----
+
+_ollama_cache = {"ts": 0.0, "ok": False, "models": []}
+
+async def probe_ollama(base=DEFAULT_OLLAMA):
+    """Check if a local Ollama is running and which models it has. Cached 60s."""
+    now = time.time()
+    if now - _ollama_cache["ts"] < 60:
+        return _ollama_cache
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(base.rstrip("/") + "/api/tags")
+            r.raise_for_status()
+            models = [m.get("name", "") for m in r.json().get("models", []) if m.get("name")]
+        _ollama_cache.update(ts=now, ok=True, models=models)
+    except Exception:
+        _ollama_cache.update(ts=now, ok=False, models=[])
+    return _ollama_cache
+
+PREFERRED_MODELS = ("llama3.2", "llama3.1", "llama3", "qwen2.5", "qwen", "mistral", "gemma", "phi")
+
+def pick_model(models):
+    for needle in PREFERRED_MODELS:
+        for m in models:
+            if needle in m.lower():
+                return m
+    return models[0] if models else None
+
+async def pull_model(model="llama3.2", base=DEFAULT_OLLAMA):
+    """Ask local Ollama to download a model (long-running; run as a background task)."""
+    async with httpx.AsyncClient(timeout=1800.0) as client:
+        r = await client.post(base.rstrip("/") + "/api/pull", json={"model": model, "stream": False})
+        r.raise_for_status()
+    _ollama_cache["ts"] = 0.0  # force re-probe

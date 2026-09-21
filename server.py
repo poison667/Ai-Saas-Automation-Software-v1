@@ -1633,38 +1633,85 @@ def _parse_json_block(text):
         return None
 
 async def try_real_ai(user, task_key, prompt, extra_ctx=""):
-    """Try the user's connected provider. Returns text or None (fallback to builtin)."""
-    prefs = _user_prefs(user)
-    if not ai_engine.provider_active(prefs):
-        return None
-    engine = prefs.get("aiEngine") or {}
-    custom = engine.get("customPrompts") or {}
-    system = (custom.get(task_key) or DEFAULT_SYSTEMS.get(task_key) or "").strip()
-    voice = prefs.get("brandVoice") or {}
-    if voice.get("style"):
-        system += "\n\nWrite in this brand voice: " + str(voice["style"])[:600]
-    if extra_ctx:
-        prompt = extra_ctx + "\n\n" + prompt
-    try:
-        return await ai_engine.generate_text(prefs, prompt, system=system or None)
-    except ai_engine.AIEngineError:
-        return None
+    """Returns (text, engine_name). text is None when falling back to builtin.
 
-def _engine_name(user):
-    return ai_engine.provider_active(_user_prefs(user)) or "builtin"
+    Order: 1) explicitly connected provider  2) auto-detected local Ollama
+    3) builtin simulated engine. Zero config needed for local AI.
+    """
+    prefs = _user_prefs(user)
+    voice = prefs.get("brandVoice") or {}
+    full_prompt = (extra_ctx + "\n\n" + prompt) if extra_ctx else prompt
+
+    if ai_engine.provider_active(prefs):
+        engine = prefs.get("aiEngine") or {}
+        custom = engine.get("customPrompts") or {}
+        system = (custom.get(task_key) or DEFAULT_SYSTEMS.get(task_key) or "").strip()
+        if voice.get("style"):
+            system += "\n\nWrite in this brand voice: " + str(voice["style"])[:600]
+        try:
+            text = await ai_engine.generate_text(prefs, full_prompt, system=system or None)
+            return text, ai_engine.provider_active(prefs)
+        except ai_engine.AIEngineError:
+            return None, "builtin"
+
+    model = await auto_local_model()
+    if model:
+        auto_prefs = {"aiEngine": {"provider": "ollama", "baseUrl": ai_engine.DEFAULT_OLLAMA,
+                                   "model": model, "temperature": 0.7, "maxTokens": 1200}}
+        system = DEFAULT_SYSTEMS.get(task_key) or ""
+        if voice.get("style"):
+            system += "\n\nWrite in this brand voice: " + str(voice["style"])[:600]
+        try:
+            text = await ai_engine.generate_text(auto_prefs, full_prompt, system=system or None)
+            return text, f"local AI ({model})"
+        except ai_engine.AIEngineError:
+            return None, "builtin"
+    return None, "builtin"
+
+async def auto_local_model():
+    """Detect a running local Ollama and pick its best model. None if absent."""
+    probe = await ai_engine.probe_ollama()
+    if not probe["ok"] or not probe["models"]:
+        return None
+    return ai_engine.pick_model(probe["models"])
 
 @app.get("/api/ai/engine")
 async def ai_engine_status(user=Depends(require_user)):
     prefs = _user_prefs(user)
     cfg = prefs.get("aiEngine") or {}
     provider = cfg.get("provider") or "builtin"
+    auto_local = None
+    if provider == "builtin":
+        probe = await ai_engine.probe_ollama()
+        if probe["ok"]:
+            model = ai_engine.pick_model(probe["models"])
+            auto_local = {"found": True, "hasModel": bool(model), "model": model, "models": probe["models"][:12]}
+        else:
+            auto_local = {"found": False}
     return {
         "provider": provider,
         "model": cfg.get("model") or "",
         "connected": provider != "builtin",
+        "autoLocal": auto_local,
         "canImage": provider in ("openai", "custom"),
         "voice_trained": bool((prefs.get("brandVoice") or {}).get("style")),
     }
+
+@app.post("/api/ai/local/setup")
+async def local_setup(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    model = (body.get("model") or "llama3.2").strip()[:60]
+    probe = await ai_engine.probe_ollama()
+    if not probe["ok"]:
+        raise HTTPException(400, "Ollama is not running on this computer — install it from ollama.com first")
+    async def _bg_pull(m):
+        try:
+            await ai_engine.pull_model(m)
+        except Exception:
+            pass
+    asyncio.create_task(_bg_pull(model))
+    log_activity(user["id"], "ai", f"Local model download started: {model}")
+    return {"ok": True, "message": f"Downloading {model} in the background (usually 2–5 minutes). The AI Engine page will show it when ready."}
 
 @app.get("/api/ai/config")
 async def get_ai_config(user=Depends(require_user)):
@@ -1733,15 +1780,15 @@ async def ai_ask(request: Request, user=Depends(require_user)):
     history = body.get("history") or []
     ctx = "\n".join(f"{'You' if m.get('role') == 'user' else 'Lumina'}: {(m.get('content') or '')[:400]}" for m in history[-6:])
     prefs = _user_prefs(user)
-    if ai_engine.provider_active(prefs):
-        text = await try_real_ai(user, "ask", message, extra_ctx=("Conversation so far:\n" + ctx) if ctx else "")
-        if text is None:
-            raise HTTPException(502, "Your AI provider did not respond — check the AI Engine settings")
-        cost, engine = 0, _engine_name(user)
+    text, eng = await try_real_ai(user, "ask", message, extra_ctx=("Conversation so far:\n" + ctx) if ctx else "")
+    if text is not None:
+        cost, engine = 0, eng
         with closing(db()) as conn:
-            limit = PLAN_LIMITS.get(prefs.get("plan", "starter"), 500)
-            u = conn.execute("SELECT ai_credits_used FROM users WHERE id=?", (user["id"],)).fetchone()
+            u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
+            limit = PLAN_LIMITS.get(u["plan"], 500)
             used = u["ai_credits_used"]
+    elif ai_engine.provider_active(prefs):
+        raise HTTPException(502, "Your AI provider did not respond — check the AI Engine settings")
     else:
         cost = 2
         with closing(db()) as conn:
@@ -1752,16 +1799,69 @@ async def ai_ask(request: Request, user=Depends(require_user)):
     log_activity(user["id"], "ai", f"AI Studio asked: “{message[:48]}”")
     return {"text": text, "engine": engine, "credits_used": cost, "credits_left": limit - used}
 
-_BUILTIN_ASK = (
-    ("Here's my take on “{m}” — three moves that work right now:\n\n1. Open with a hook that names the exact audience and pain point (the first 1.5 seconds decide everything).\n2. Deliver ONE clear takeaway per post — depth beats volume; save-worthy posts get pushed by every algorithm.\n3. End every post with a specific CTA (comment a keyword, save this, share with a friend) and reply to every comment in the first hour.\n\nConsistency on these three compounds fast. Connect a real AI in AI Engine for deeper, unlimited answers."),
-    ("Quick strategy for “{m}”:\n\n• Post when your audience is actually scrolling (check your Analytics heatmap) — usually lunchtime and 7–10pm.\n• Repurpose one strong idea into 3 formats: a hook-driven short, a carousel with the details, and a story poll to collect replies.\n• Track which hook style gets saves/shares and double down — that's your content edge.\n\nPlug in your own AI key under AI Engine for unlimited deep coaching."),
-    ("For “{m}”, the winning play this week:\n\n1. Pick one topic you can own and make a 3-part series — series hook viewers into returning.\n2. Front-load the value: no long intros, the payoff belongs in the first line.\n3. After 48h, kill what flopped and remake your best performer with a new hook.\n\nWant deeper analysis? Connect a real AI provider in AI Engine."),
-)
+_BUILTIN_KEYWORDS = {
+    "grow": ("grow", "follower", "followers", "audience", "reach", "viral", "algorithm"),
+    "money": ("money", "price", "pricing", "charge", "rate", "earn", "monetiz", "sponsor", "paid", "income", "revenue"),
+    "content": ("content", "idea", "ideas", "post", "video", "what should i", "niche", "series"),
+    "engage": ("engage", "engagement", "comment", "likes", "save", "share", "community"),
+    "clients": ("client", "brand deal", "pitch", "outreach", "invoice", "negotiat", "freelance"),
+    "hooks": ("hook", "caption", "headline", "first line", "intro", "scroll"),
+}
+
+_BUILTIN_ANSWERS = {
+    "grow": [
+        "On “{m}” — growth comes from repeatable formats, not luck:\n\n1. Pick ONE content format you can produce daily (talking-head, before/after, list, duet-style) and run it for 14 days straight.\n2. Study your top 3 posts ever and remake each with a sharper hook — remakes of winners outperform new ideas.\n3. Reply to every comment within the first hour; the algorithm reads early conversation as quality.\n\nLog your numbers weekly in Metrics Tracker and you'll see exactly which format grows you.",
+        "Here's the growth play for “{m}”:\n\n• Post 1–2x daily for 3 weeks — volume is how the algorithm learns who to show you to.\n• First 1.5 seconds decide everything: show the payoff or the conflict immediately, no intros.\n• Steal structure, not content: find 5 viral posts in your niche, copy their format with YOUR topic.\n• Pin your 3 best posts to your profile so new visitors binge immediately.",
+        "For “{m}”, the fastest honest path:\n\n1. Series content — “part 1/2/3” turns one viewer into three visits.\n2. Comment on 10 big accounts in your niche daily with genuinely useful takes; their audience sees you.\n3. After 2 weeks, check Metrics Tracker: double down on the platform/format with the best follower delta, cut the rest.",
+        "About “{m}” — three compounding moves:\n\n• Consistency beats intensity: 1 post/day for 30 days > 20 posts in one week.\n• Every post needs ONE idea only — mixed messages get skipped.\n• Use your last 10 minutes of creating on the HOOK, not the content. That's where growth lives.",
+    ],
+    "money": [
+        "On “{m}” — the money loop inside Lumina:\n\n1. Run your numbers through the Rate Calculator — never quote from feelings.\n2. Pitch 5 brands per week (the pitch writer drafts them for you). Expect 1–2 replies.\n3. Quote the middle number, counter low offers with the Negotiation Coach, then send a real invoice the same day you agree.\n\nCreators who invoice immediately get paid 2x faster than those who 'send it later'.",
+        "For “{m}”: your income grows from three taps —\n\n• Sponsored content: price via Rate Calculator, pitch via the pitch agent, invoice same-day.\n• Your own service: package what you already know (see Services Studio) — this usually earns more than sponsorships.\n• Affiliate: only products you actually use; disclosure keeps you safe.\n\nTrack every dollar in Revenue so you know which tap to open wider.",
+        "About “{m}” — the uncomfortable truth: creators don't have an audience problem, they have an ASK problem.\n\n1. Send 5 pitches this week (Media Kit page writes them).\n2. Your minimum price = Rate Calculator floor. Below that, politely decline.\n3. Raise your rate 10% every 3 closed deals.\n\nSmall consistent asks beat one big hope.",
+        "On “{m}”:\n\n• Charge per deliverable, not per hour — you sell outcomes.\n• Bundle (post + video + stories) instead of discounting — the Rate Calculator has a bundle preset worth ~2.4x a single post.\n• Get 50% upfront for anything over $200.\n\nPut the deal in Revenue the moment they say yes — pipeline visibility is what turns one deal into ten.",
+    ],
+    "content": [
+        "For “{m}” — 5 formats that work in almost any niche right now:\n\n1. “I tested X for 7 days — here's what happened”\n2. 3 mistakes everyone makes in [your niche]\n3. Behind-the-scenes of your actual process\n4. Answering a real comment/question on camera\n5. “Beginner vs Pro” doing the same thing\n\nGenerate full scripts with the AI Generator, then log results in Post Performance to find your winner.",
+        "On “{m}”: stop brainstorming, start systemizing.\n\n• One pillar topic, three angles per week: teach one, entertain one, show one behind-the-scenes.\n• Batch: write 7 hooks in one sitting (AI Generator helps), film all in one afternoon.\n• Keep a swipe file of every post that made YOU stop scrolling — that's your idea mine.",
+        "About “{m}” — the content that grows accounts also sells:\n\n1. Teach (builds trust) → 40% of posts\n2. Prove (results, before/after, numbers) → 30%\n3. Personal (your story, opinions) → 30%\n\nThe profile is the shop window; the feed is the salesperson. Thread & Carousel pages turn one idea into a week of posts.",
+        "For “{m}”: one idea, many formats. Take your best post ever and:\n\n• Turn it into a carousel (Carousel designer)\n• Turn it into a thread (Thread writer)\n• Read it on camera as a short video\n\nRepurposing a proven idea beats inventing a new one 8 times out of 10.",
+    ],
+    "engage": [
+        "On “{m}” — engagement is earned in the first hour:\n\n1. Reply to EVERY comment fast; each reply doubles the comment count the algorithm sees.\n2. End posts with a question that's effortless to answer (“which one: A or B?” beats “thoughts?”).\n3. Saves > likes: give checklists, templates, and step-by-steps people want to keep.",
+        "For “{m}”: the engagement ladder —\n\n• Comments come from opinions and gentle controversy (take a side).\n• Shares come from “this is SO me” or “my friend needs this” content.\n• Saves come from utility: numbers, steps, lists.\n\nDesign each post to trigger ONE of the three on purpose.",
+        "About “{m}”: engagement follows specificity. “5 tips” dies; “5 things I wish I knew before my first brand deal” lives. Name your exact viewer in the first line and they'll answer you.",
+    ],
+    "clients": [
+        "On “{m}” — client pipeline 101:\n\n1. Add every contact to Client CRM the moment they appear.\n2. Pitch with your real numbers (Media Kit) — the pitch writer composes it.\n3. Follow up after 3 days; 60% of deals close on follow-up #2 or later.\n\nThe Follow-ups page watches your invoices so nothing slips.",
+        "For “{m}”: brands buy certainty. Your pitch must answer 3 questions in 10 seconds: who are you, who's your audience, what will you deliver. Anything else is noise. The pitch agent keeps you inside that shape.",
+        "About “{m}” — professionalize the money path: agree → deal in Revenue → invoice same day → 50% upfront → deliver → follow up automatically. Creators lose the most money in the gaps between those steps.",
+    ],
+    "hooks": [
+        "On “{m}” — hook formulas that stop thumbs:\n\n1. “Nobody tells you this about X…”\n2. “I was today years old when…”\n3. Number + outcome: “3 changes that doubled my saves”\n4. Direct call-out: “If you're a [niche], stop doing X”\n\nWrite 5 hooks per post and use the strongest — the first line IS the post.",
+        "For “{m}”: a hook is a promise. Make it specific (numbers, timeframes, stakes), create an open loop (withhold the payoff), and say it like you'd say it to a friend. Test 2 hooks for your next post and log which wins in Post Performance.",
+        "About “{m}”: cut your first sentence in half, then cut it in half again. Whatever survives is your hook. Everything else belongs in the body.",
+    ],
+    "general": [
+        "Here's my take on “{m}”:\n\n1. Define the ONE outcome you want from this (followers, sales, or skills) — mixed goals produce mixed results.\n2. Pick the smallest repeatable action toward it and do it daily for 14 days.\n3. Measure weekly in Metrics Tracker and change only what the numbers say to change.\n\nConnect a local AI (Ollama) or any AI key in AI Engine and this assistant becomes a deep, unlimited strategist.",
+        "On “{m}” — the 80/20:\n\n• 80% of results come from hook quality + consistency.\n• Everything else (gear, aesthetics, posting times) is the remaining 20%.\n\nDo the boring two things for 30 days, track it in Metrics Tracker, then optimize the rest.",
+        "About “{m}”: start smaller than feels comfortable. One niche, one platform, one format — mastered. Then expand. Creators who go wide early usually go nowhere; creators who go deep get paid.",
+        "For “{m}” — my honest advice:\n\n1. Write down what 'working' means in numbers (e.g. 1,000 followers, 2 paid deals).\n2. Reverse-plan: what must be true each week to hit it?\n3. Put those weekly actions into Follow-ups & Tasks and actually close them.\n\nMomentum is just finished tasks stacked.",
+        "Quick plan for “{m}”:\n\nToday: write 5 hooks with the Generator.\nThis week: post 5 times, reply to everything, log numbers.\nThis month: pitch 10 brands, keep the 2 best conversations.\n\nRepeat. That loop IS the job.",
+    ],
+}
 
 def _builtin_ask(message):
-    rng = random.Random(hash(message.lower()) & 0xFFFFFFFF)
-    m = message[:80].strip()
-    return rng.choice(_BUILTIN_ASK).format(m=m)
+    low = message.lower()
+    topic = "general"
+    for key, words in _BUILTIN_KEYWORDS.items():
+        if any(w in low for w in words):
+            topic = key
+            break
+    # rotate the pick every 10 minutes so the same question gets fresh answers
+    seed = (hash(low) & 0xFFFFFFFF) ^ (int(time.time()) // 600)
+    rng = random.Random(seed)
+    return rng.choice(_BUILTIN_ANSWERS[topic]).format(m=message[:80].strip())
 
 @app.post("/api/ai/voice/train")
 async def train_voice(request: Request, user=Depends(require_user)):
@@ -1783,7 +1883,7 @@ async def train_voice(request: Request, user=Depends(require_user)):
     sentences = max(1, len(re.split(r"[.!?]+", blob)))
     avg_len = max(1, len(words) // sentences)
     style = None
-    real = await try_real_ai(user, "ask",
+    real, _eng = await try_real_ai(user, "ask",
         "Analyze this writing and describe the author's brand voice in ONE concise paragraph (tone, energy, signature habits, dos and don'ts). Writing samples:\n" + blob[:2500])
     if real:
         style = real.strip()[:600]
@@ -1799,7 +1899,7 @@ async def train_voice(request: Request, user=Depends(require_user)):
         "avg_sentence_len": avg_len,
         "emoji_density": round(emoji_n / max(1, len(words) / 100), 2),
         "trained_at": now_iso(),
-        "engine": _engine_name(user),
+        "engine": _eng,
     }
     with closing(db()) as conn:
         row = conn.execute("SELECT prefs FROM users WHERE id=?", (user["id"],)).fetchone()
@@ -1863,7 +1963,7 @@ async def generate(request: Request, user=Depends(require_user)):
     plats = body.get("platforms") or ["instagram"]
     length = body.get("length") or "medium"
     prefs = _user_prefs(user)
-    real = await try_real_ai(user, "generator",
+    real, _eng = await try_real_ai(user, "generator",
         f"Topic: {topic}\nTone: {tone}\nPlatforms: {', '.join(plats)}\nLength: {length}\nWrite the post content now.",
         extra_ctx=f"Account niche context: {prefs.get('niche') or topic}")
     engine = "builtin"
@@ -1880,7 +1980,7 @@ async def generate(request: Request, user=Depends(require_user)):
             conn.execute("INSERT INTO generations (user_id, topic, tone, platforms, content, hashtags, created_at) VALUES (?,?,?,?,?,?,?)",
                          (user["id"], topic, tone, json.dumps(plats), content, json.dumps(tags), now_iso()))
             conn.commit()
-        engine = _engine_name(user)
+        engine = _eng
         cost = 0
     else:
         await asyncio.sleep(random.uniform(1.2, 2.0))  # simulated model latency
@@ -2189,7 +2289,7 @@ async def ai_profile_endpoint(request: Request, user=Depends(require_user)):
     tone = body.get("tone") or "casual"
     name = body.get("name") or ""
     platform = body.get("platform") or "instagram"
-    real = await try_real_ai(user, "profile",
+    real, _eng = await try_real_ai(user, "profile",
         f"Niche: {niche}\nTone: {tone}\nCreator or brand name: {name or 'not set'}\nPlatform: {platform}\nCreate the full profile kit now.")
     if real is not None:
         parsed = _parse_json_block(real) or {}
@@ -2206,8 +2306,8 @@ async def ai_profile_endpoint(request: Request, user=Depends(require_user)):
                 u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
                 limit = PLAN_LIMITS.get(u["plan"], 500)
                 used = u["ai_credits_used"]
-            log_activity(user["id"], "ai", f"Profile kit generated for “{niche[:48]}” ({_engine_name(user)})")
-            return {**result, "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
+            log_activity(user["id"], "ai", f"Profile kit generated for “{niche[:48]}” ({_eng})")
+            return {**result, "engine": _eng, "credits_used": 0, "credits_left": limit - used}
     await asyncio.sleep(random.uniform(1.0, 1.8))
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
@@ -2223,7 +2323,7 @@ async def ai_thread_endpoint(request: Request, user=Depends(require_user)):
     if not topic:
         raise HTTPException(400, "Give the thread a topic")
     tone = body.get("tone") or "casual"
-    real = await try_real_ai(user, "thread",
+    real, _eng = await try_real_ai(user, "thread",
         f"Topic: {topic}\nTone: {tone}\nPosts: {body.get('count') or 5}\nWrite the thread now.")
     if real is not None:
         parsed = _parse_json_block(real) or {}
@@ -2233,9 +2333,9 @@ async def ai_thread_endpoint(request: Request, user=Depends(require_user)):
                 u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
                 limit = PLAN_LIMITS.get(u["plan"], 500)
                 used = u["ai_credits_used"]
-            log_activity(user["id"], "ai", f"Thread generated for “{topic[:48]}” ({_engine_name(user)})")
+            log_activity(user["id"], "ai", f"Thread generated for “{topic[:48]}” ({_eng})")
             return {"posts": posts[:12], "count": len(posts[:12]), "topic": topic,
-                    "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
+                    "engine": _eng, "credits_used": 0, "credits_left": limit - used}
     await asyncio.sleep(random.uniform(1.0, 1.8))
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
@@ -2251,7 +2351,7 @@ async def ai_carousel_endpoint(request: Request, user=Depends(require_user)):
     if not topic:
         raise HTTPException(400, "Give the carousel a topic")
     tone = body.get("tone") or "casual"
-    real = await try_real_ai(user, "carousel",
+    real, _eng = await try_real_ai(user, "carousel",
         f"Topic: {topic}\nTone: {tone}\nWrite the 7-slide carousel now.")
     if real is not None:
         parsed = _parse_json_block(real) or {}
@@ -2265,9 +2365,9 @@ async def ai_carousel_endpoint(request: Request, user=Depends(require_user)):
                 u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
                 limit = PLAN_LIMITS.get(u["plan"], 500)
                 used = u["ai_credits_used"]
-            log_activity(user["id"], "ai", f"Carousel generated for “{topic[:48]}” ({_engine_name(user)})")
+            log_activity(user["id"], "ai", f"Carousel generated for “{topic[:48]}” ({_eng})")
             return {"slides": slides, "topic": topic,
-                    "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
+                    "engine": _eng, "credits_used": 0, "credits_left": limit - used}
     await asyncio.sleep(random.uniform(1.0, 1.8))
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
@@ -2828,7 +2928,7 @@ async def ai_pitch_endpoint(request: Request, user=Depends(require_user)):
     await asyncio.sleep(random.uniform(1.0, 1.8))
     mk = await media_kit(user)
     contact = (body.get("contact") or "").strip()
-    real = await try_real_ai(user, "pitch",
+    real, _eng = await try_real_ai(user, "pitch",
         f"Brand to pitch: {brand}\nContact: {contact or 'not provided'}\nAngle: {angle}\n"
         f"My stats: {mk.get('followers',0)} followers, engagement {mk.get('engagement',0)}%, niches {mk.get('niches') or []}.\nWrite the pitch email now.",
         extra_ctx="Include a subject line, keep it under 180 words, confident but warm.")
@@ -2844,9 +2944,9 @@ async def ai_pitch_endpoint(request: Request, user=Depends(require_user)):
             u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
             limit = PLAN_LIMITS.get(u["plan"], 500)
             used = u["ai_credits_used"]
-        log_activity(user["id"], "ai", f"Brand pitch drafted for “{brand[:48]}” ({_engine_name(user)})")
+        log_activity(user["id"], "ai", f"Brand pitch drafted for “{brand[:48]}” ({_eng})")
         return {"subject": subject, "body": email, "angle": angle, "opener": email.split("\n")[0][:120],
-                "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
+                "engine": _eng, "credits_used": 0, "credits_left": limit - used}
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], PITCH_COST)
         conn.commit()
@@ -2861,7 +2961,7 @@ async def ai_negotiate_endpoint(request: Request, user=Depends(require_user)):
     await asyncio.sleep(random.uniform(1.0, 1.8))
     mk = await media_kit(user)
     details = (body.get("details") or "").strip()
-    real = await try_real_ai(user, "negotiate",
+    real, _eng = await try_real_ai(user, "negotiate",
         f"Scenario: {scenario}\nDetails: {details or 'none given'}\n"
         f"My stats: {mk.get('followers',0)} followers, engagement {mk.get('engagement',0)}%.\nCoach me on the reply.")
     if real is not None:
@@ -2871,12 +2971,12 @@ async def ai_negotiate_endpoint(request: Request, user=Depends(require_user)):
                 u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
                 limit = PLAN_LIMITS.get(u["plan"], 500)
                 used = u["ai_credits_used"]
-            log_activity(user["id"], "ai", f"Negotiation coach: {scenario} ({_engine_name(user)})")
+            log_activity(user["id"], "ai", f"Negotiation coach: {scenario} ({_eng})")
             return {"scenario": NEGOTIATE_SCENARIOS.get(scenario, scenario),
                     "playbook": [str(parsed.get("reasoning") or "Personalized by your connected AI"),
                                  "Crafted live by your AI engine — not a template"],
                     "reply_template": str(parsed["reply"]), "tone": "confident and collaborative",
-                    "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
+                    "engine": _eng, "credits_used": 0, "credits_left": limit - used}
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], NEGOTIATE_COST)
         conn.commit()

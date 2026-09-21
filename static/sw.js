@@ -1,5 +1,5 @@
 /* Lumina service worker — offline-first for the app shell, network-first for the API */
-const CACHE = "lumina-shell-v11";
+const CACHE = "lumina-shell-v12";
 const SHELL = ["/", "/styles.css", "/core.js", "/pages1.js", "/pages2.js", "/pages3.js",
                "/pages4.js", "/pages5.js", "/pages6.js", "/pages7.js", "/pages8.js", "/pages9.js", "/pages10.js", "/pages11.js", "/pages12.js", "/pages13.js", "/manifest.webmanifest", "/icon-512.png"];
 

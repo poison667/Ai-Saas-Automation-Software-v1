@@ -22,9 +22,13 @@ async function aiFetchState() {
 
 function engineBadge(engine) {
   if (!engine) return "";
-  return engine.connected
-    ? `<span class="pill ok">● Real AI: ${esc(engine.provider)}${engine.model ? " · " + esc(engine.model) : ""}</span>`
-    : `<span class="pill">● Built-in demo engine</span>`;
+  if (engine.connected)
+    return `<span class="pill ok">● Real AI: ${esc(engine.provider)}${engine.model ? " · " + esc(engine.model) : ""}</span>`;
+  if (engine.autoLocal && engine.autoLocal.found && engine.autoLocal.hasModel)
+    return `<span class="pill ok">● Local AI auto-connected: Ollama · ${esc(engine.autoLocal.model)}</span>`;
+  if (engine.autoLocal && engine.autoLocal.found)
+    return `<span class="pill" style="background:rgba(251,191,36,.12);color:var(--yellow);border-color:rgba(251,191,36,.35)">● Ollama found — no model yet</span>`;
+  return `<span class="pill">● Built-in demo engine</span>`;
 }
 
 /* ================= AI STUDIO ================= */
@@ -90,7 +94,11 @@ ROUTES.aistudio = {
     if (!AI_STATE.chat.length) {
       bubble("ai", engine.connected
         ? `Connected to ${engine.provider}${engine.model ? " (" + engine.model + ")" : ""}. I'm live and ready — ask me anything about content, growth, pricing or clients.`
-        : "I'm running on Lumina's built-in engine — I give quick strategy answers here. Connect your own AI (free local models work too) in AI Engine for deep, unlimited answers.");
+        : (engine.autoLocal && engine.autoLocal.found && engine.autoLocal.hasModel)
+          ? `I found Ollama running on your computer and connected to it automatically (${engine.autoLocal.model}). No setup needed — ask me anything, answers are free and unlimited.`
+          : (engine.autoLocal && engine.autoLocal.found)
+            ? "I found Ollama on your computer but it has no model yet — open AI Engine and click “Download model” (one click). Meanwhile I'll give you quick built-in answers."
+            : "I'm running on Lumina's built-in engine. Install Ollama (free, ollama.com) and I'll auto-connect to it — or add any AI key in AI Engine for deep, unlimited answers.");
     } else {
       AI_STATE.chat.forEach(m => bubble(m.role, m.text, m.meta));
     }
@@ -159,8 +167,27 @@ ROUTES.aiengine = {
     /* ---- Tab: Connection ---- */
     function renderConn() {
       const p = cfg.provider || "builtin";
+      const al = AI_STATE.engine && AI_STATE.engine.autoLocal;
+      const autoBanner = (p === "builtin" && al && al.found) ? `
+          <div class="card" style="border-color:rgba(52,211,153,.45)">
+            <h3>${icon("cpu", 16)} Local AI detected on this computer</h3>
+            ${al.hasModel ? `
+              <div class="card-sub" style="margin-top:6px;line-height:1.8">
+                <b>Ollama is running with ${esc(al.model)}</b> — Lumina is already using it automatically for every AI feature.<br>
+                Nothing to configure, nothing to pay. If you want a specific or cloud provider instead, pick it below.
+              </div>` : `
+              <div class="card-sub" style="margin-top:6px;line-height:1.8">
+                Ollama is running but has no model yet. One click downloads the recommended free model (~2 GB, one time):
+              </div>
+              <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+                <button class="btn primary" id="ae-pull">${icon("check", 14)} Download model (llama3.2)</button>
+                ${al.models && al.models.length ? `<select id="ae-pull-model" class="input" style="width:200px">${["llama3.2", "llama3.1:8b", "qwen2.5:7b", "mistral"].map(m => `<option value="${m}">${m}</option>`).join("")}</select>` : ""}
+                <span id="ae-pull-out" style="font-size:12.5px;color:var(--muted)"></span>
+              </div>`}
+          </div>` : "";
       body.innerHTML = `
         <div class="stack">
+          ${autoBanner}
           <div class="card">
             <h3>Choose your AI provider</h3>
             <div class="card-sub">Local options are completely free and never leave your computer.</div>
@@ -239,6 +266,18 @@ ROUTES.aiengine = {
           renderConn();
           paintBadge(fresh.engine);
         } catch (e) { toast(e.message || "Could not save", { type: "error" }); }
+      };
+      const pull = body.querySelector("#ae-pull");
+      if (pull) pull.onclick = async () => {
+        const modelSel = body.querySelector("#ae-pull-model");
+        const model = modelSel ? modelSel.value : "llama3.2";
+        const out = body.querySelector("#ae-pull-out");
+        out.textContent = "Starting download…";
+        try {
+          const res = await api("/api/ai/local/setup", { method: "POST", body: { model } });
+          out.textContent = res.message;
+          toast("Model download started — the page will detect it automatically");
+        } catch (e) { out.textContent = e.message || "Download failed"; }
       };
     }
 
