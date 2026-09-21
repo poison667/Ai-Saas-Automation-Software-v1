@@ -2,6 +2,9 @@
 Lumina — AI Social Media Suite (full-stack demo SaaS)
 FastAPI + SQLite backend. Serves the SPA from ./static and a JSON API under /api.
 """
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import os
 import re
 import io
@@ -34,9 +37,10 @@ def _app_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 def _writable_dir() -> str:
-    # The SQLite DB must live somewhere writable — next to the exe, not in the temp bundle.
+    # The SQLite DB must live somewhere writable and persistent.
     if _frozen():
-        return os.path.dirname(os.path.abspath(sys.executable))
+        base = os.environ.get("LUMINA_DATA_DIR") or os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "Lumina")
     return os.path.dirname(os.path.abspath(__file__))
 
 BASE_DIR = _app_dir()
@@ -2535,5 +2539,7 @@ if __name__ == "__main__":
         print("\n  Lumina is running at http://localhost:8000")
         print("  Login: demo@lumina.social / demo1234")
         print("  Close this window to quit.\n")
-        threading.Timer(1.2, lambda: webbrowser.open("http://localhost:8000")).start()
-    uvicorn.run(app, host="127.0.0.1" if _frozen() else "0.0.0.0", port=8000, log_level="warning")
+        if not os.environ.get("LUMINA_NO_BROWSER"):
+            threading.Timer(1.2, lambda: webbrowser.open("http://localhost:8000")).start()
+    uvicorn.run(app, host="127.0.0.1" if _frozen() else "0.0.0.0",
+                port=int(os.environ.get("LUMINA_PORT", "8000")), log_level="warning")

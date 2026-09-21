@@ -1,7 +1,7 @@
 {
   "name": "lumina",
   "productName": "Lumina",
-  "version": "1.4.0",
+  "version": "1.8.0",
   "description": "Lumina — AI Social Media Suite. Generate, schedule and analyze social content with AI.",
   "main": "main.js",
   "author": "Lumina",
@@ -23,15 +23,19 @@
     "files": [
       "main.js",
       "icon.png",
+      "icon.ico",
       "package.json"
     ],
     "extraResources": [
-      { "from": "../server.py", "to": "server/server.py" },
-      { "from": "../static", "to": "server/static" }
+      { "from": "backend/Lumina-backend.exe", "to": "backend/Lumina-backend.exe" }
     ],
     "directories": { "output": "release" },
+    "win": {
+      "icon": "icon.ico",
+      "target": [{ "target": "portable", "arch": ["x64"] }],
+      "artifactName": "Lumina-Desktop-${arch}.exe"
+    },
     "mac": { "icon": "icon.png", "category": "public.app-category.social-networking", "target": ["dmg", "zip"] },
-    "win": { "icon": "icon.png", "target": ["nsis"] },
     "linux": { "icon": "icon.png", "category": "Network", "target": ["AppImage", "deb"] }
   }
 }

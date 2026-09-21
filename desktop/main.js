@@ -1,11 +1,13 @@
 /**
  * Lumina desktop app (Electron)
- * Starts the local Lumina backend, waits for it to be healthy, then opens a native window.
+ * Starts the bundled Lumina backend (no Python needed), waits for it to be
+ * healthy, then opens a native app window — no browser involved.
  */
 const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require("electron");
-const { spawn } = require("child_process");
+const { spawn, exec } = require("child_process");
 const http = require("http");
 const path = require("path");
+const fs = require("fs");
 
 const PORT = process.env.LUMINA_PORT || 8000;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -26,7 +28,7 @@ function healthCheck() {
   });
 }
 
-async function waitForServer(timeoutMs = 30000) {
+async function waitForServer(timeoutMs = 45000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     if (await healthCheck()) return true;
@@ -35,22 +37,75 @@ async function waitForServer(timeoutMs = 30000) {
   return false;
 }
 
-function startBackend() {
+function backendSpec() {
+  if (app.isPackaged) {
+    // Bundled single-file backend exe (built with PyInstaller in CI).
+    const exe = path.join(process.resourcesPath, "backend", "Lumina-backend.exe");
+    return { cmd: exe, args: [], cwd: path.dirname(exe) };
+  }
+  // Developer mode: run from source.
   const isWin = process.platform === "win32";
-  server = spawn(isWin ? "python" : "python3", ["server.py"], {
-    cwd: ROOT,
+  return { cmd: isWin ? "python" : "python3", args: ["server.py"], cwd: ROOT };
+}
+
+function startBackend() {
+  const spec = backendSpec();
+  if (app.isPackaged && !fs.existsSync(spec.cmd)) {
+    dialog.showErrorBox("Lumina is missing its engine", `Backend not found at:\n${spec.cmd}\n\nRe-download the app from the releases page.`);
+    app.quit();
+    return false;
+  }
+  server = spawn(spec.cmd, spec.args, {
+    cwd: spec.cwd,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, LUMINA_PORT: String(PORT) },
+    windowsHide: true,
+    env: {
+      ...process.env,
+      LUMINA_PORT: String(PORT),
+      LUMINA_NO_BROWSER: "1",                        // Electron is the window — no browser tab
+      LUMINA_DATA_DIR: app.getPath("userData"),      // data persists across launches/updates
+    },
   });
   serverWasStartedByUs = true;
   server.stdout.on("data", d => process.stdout.write(`[lumina-server] ${d}`));
   server.stderr.on("data", d => process.stderr.write(`[lumina-server] ${d}`));
   server.on("exit", code => {
-    if (win && !win.isDestroyed() && code !== 0) {
-      dialog.showErrorBox("Lumina backend stopped", `The local server exited unexpectedly (code ${code}). Is Python 3 installed?`);
+    if (win && !win.isDestroyed() && code !== 0 && code !== null) {
+      dialog.showErrorBox("Lumina engine stopped", `The backend exited unexpectedly (code ${code}).`);
     }
   });
+  return true;
 }
+
+function stopBackend() {
+  if (!server || !serverWasStartedByUs) return;
+  try {
+    if (process.platform === "win32") {
+      // kill the whole process tree (frozen PyInstaller exe)
+      exec(`taskkill /pid ${server.pid} /T /F`, () => {});
+    } else {
+      server.kill("SIGTERM");
+    }
+  } catch (e) { /* already gone */ }
+  server = null;
+}
+
+const SPLASH = "data:text/html;charset=utf-8," + encodeURIComponent(`<!doctype html>
+<html><head><style>
+  html,body{margin:0;height:100%;background:#0a0c12;display:flex;align-items:center;justify-content:center;
+    font-family:system-ui,Segoe UI,sans-serif;color:#e6e8f2;flex-direction:column;gap:16px}
+  .logo{width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#8b5cf6,#d946ef);
+    display:flex;align-items:center;justify-content:center;font-size:30px;box-shadow:0 10px 40px rgba(139,92,246,.45)}
+  .bar{width:210px;height:5px;border-radius:99px;background:#1c2130;overflow:hidden}
+  .bar i{display:block;height:100%;width:40%;border-radius:99px;background:linear-gradient(90deg,#8b5cf6,#22d3ee);
+    animation:slide 1.1s ease-in-out infinite alternate}
+  @keyframes slide{from{margin-left:-40%}to{margin-left:100%}}
+  p{color:#8b93a7;font-size:13px;margin:0}
+</style></head><body>
+  <div class="logo">&#10024;</div>
+  <div class="bar"><i></i></div>
+  <p>Starting Lumina&hellip;</p>
+</body></html>`);
 
 function createWindow() {
   win = new BrowserWindow({
@@ -60,15 +115,16 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: "#0a0c12",
     title: "Lumina — AI Social Media Suite",
-    icon: path.join(__dirname, "icon.png"),
+    icon: path.join(__dirname, process.platform === "win32" ? "icon.ico" : "icon.png"),
     autoHideMenuBar: true,
+    show: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
-  win.loadURL(BASE);
+  win.loadURL(SPLASH);
+  win.once("ready-to-show", () => win.show());
 
-  // open external links in the system browser, not inside the app
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(BASE)) return { action: "allow" };
+    if (url.startsWith(BASE) || url.startsWith("data:")) return { action: "allow" };
     shell.openExternal(url);
     return { action: "deny" };
   });
@@ -91,11 +147,13 @@ function buildMenu() {
           click: () => dialog.showMessageBox({
             title: "Lumina",
             message: "Lumina — AI Social Media Suite",
-            detail: "Generate, schedule and analyze social content with AI.\nLocal build · data lives in lumina/data/app.db",
+            detail: "Generate, schedule and analyze social content with AI.\nFully local — your data stays on this computer.",
           }),
         },
-        { type: "separator" },
-        { label: "Learn more", click: () => shell.openExternal("https://example.com/lumina") },
+        {
+          label: "Open data folder",
+          click: () => shell.openPath(app.getPath("userData")),
+        },
       ],
     },
   ];
@@ -105,20 +163,24 @@ function buildMenu() {
 app.whenReady().then(async () => {
   buildMenu();
   ipcMain.on("open-external", (_e, url) => shell.openExternal(url));
+  app.setAppUserModelId("social.lumina.app");
+
+  createWindow(); // splash appears immediately
 
   if (!(await healthCheck())) {
-    startBackend();
+    if (!startBackend()) return;
     const up = await waitForServer();
     if (!up) {
       dialog.showErrorBox(
         "Lumina couldn't start",
-        "The local backend didn't come up within 30 seconds.\n\nCheck that Python 3 is installed and that fastapi/uvicorn are available:\n  python3 -m pip install fastapi \"uvicorn[standard]\"\n\nThen launch again."
+        "The bundled engine didn't come up within 45 seconds.\nTry running the app again, or re-download it from the releases page."
       );
+      stopBackend();
       app.quit();
       return;
     }
   }
-  createWindow();
+  if (win && !win.isDestroyed()) win.loadURL(BASE);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -126,8 +188,8 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (serverWasStartedByUs && server) {
-    try { server.kill("SIGTERM"); } catch (e) {}
-  }
+  stopBackend();
   if (process.platform !== "darwin") app.quit();
 });
+
+app.on("before-quit", () => stopBackend());
