@@ -2160,6 +2160,133 @@ async def media_kit(user=Depends(require_user)):
         "brands_worked_with": brands, "deals_won": won["c"], "earned_total": won["s"],
     }
 
+# ---- services studio (agency catalogue + proposal builder)
+
+# Each row: (id, platform, category, service, what_ai, what_human, native_3p, eligibility)
+SERVICES_CATALOG = [
+    ("TT-P03", "TikTok", "Profile", "Bio writing & positioning", "Drafts 3 bio variants in your voice", "Pick & refine", "Native", "Free"),
+    ("TT-P01", "TikTok", "Profile", "Username & display-name optimization", "Searchable, keyword-bearing candidates", "Select & apply", "Native", "Free"),
+    ("TT-P17", "TikTok", "Profile", "Profile audit", "Scored analysis vs best practice", "Senior review", "Manual", "Free"),
+    ("TT-C06", "TikTok", "Content", "Video scripts", "Hook-driven scripts in brand voice", "Approve & film", "AI-assist", "Free"),
+    ("TT-C07", "TikTok", "Content", "Hook generation", "10+ first-3-seconds variants per concept", "Choose winners", "AI-assist", "Free"),
+    ("TT-C04", "TikTok", "Content", "Content calendar", "Publishing schedule by format & pillar", "Approve timing", "AI-assist", "Free"),
+    ("TT-S02", "TikTok", "Discovery", "TikTok SEO keyword research", "Mines search intent & content gaps", "Validate priorities", "Native + 3P", "Free"),
+    ("TT-H01", "TikTok", "Discovery", "Hashtag system", "Broad/niche/branded tag pools", "Curate & rotate", "AI-assist", "Free"),
+    ("TT-T06", "TikTok", "Trends", "Trend adaptation desk", "Maps trends to your niche with fit scores", "Approve & film", "AI-assist", "Free"),
+    ("TT-V08", "TikTok", "Video", "Subtitles & on-screen text", "Auto-captions + OCR-friendly text plans", "Proofread", "Native + 3P", "Free"),
+    ("TT-L05", "TikTok", "LIVE", "LIVE run-of-show & gifting plan", "Rundowns + gift prompts", "Host the stream", "AI-assist", "~1K followers, 18+"),
+    ("TT-CO04", "TikTok", "Collaboration", "Creator outreach & pitch emails", "Drafts personalized pitches", "Send & negotiate", "AI-assist", "Free"),
+    ("TT-M01", "TikTok", "Monetization", "Creator Rewards eligibility sprint", "Gap analysis + growth plan", "Execute the plan", "Native", "10K fol + 100K views/30d"),
+    ("TT-M07", "TikTok", "Monetization", "TikTok Shop affiliate onboarding", "Product selection scoring", "Apply & film", "Native", "18+, 1K+ followers"),
+    ("TT-A11", "TikTok", "Advertising", "Spark Ads management", "Creative testing plans", "Negotiate auth codes", "Native", "Paid budgets"),
+    ("IG-P03", "Instagram", "Profile", "Instagram bio & highlights system", "Bio variants + highlight architecture", "Build highlights", "Native", "Free"),
+    ("IG-C02", "Instagram", "Content", "Carousel architecture", "Slide copy + structure", "Design", "AI + design", "Free"),
+    ("IG-C03", "Instagram", "Content", "Reels scripts & covers", "Scripts from your content engine", "Film & post", "AI-assist", "Free"),
+    ("IG-W06", "Instagram", "Engagement", "Comment-to-DM lead funnel", "Flow copy & keyword triggers", "Approve flow", "3P official API", "Paid tool"),
+    ("IG-M02", "Instagram", "Monetization", "Subscription & Gifts launch", "Tier copy + content plan", "Set prices", "Native", "~10K fol (subs) / ~500 (gifts)"),
+    ("IG-A01", "Instagram", "Advertising", "Meta ads management (IG)", "Structure + creative tests", "Approve budgets", "Native", "Paid budgets"),
+    ("YT-W01", "YouTube", "Writing", "Title & description SEO", "CTR+search variants + chapters", "Select final", "AI-assist", "Free"),
+    ("YT-MD01", "YouTube", "Media", "Thumbnail design & A/B testing", "Concepts + test matrices", "Design/approve", "Native Test & Compare", "Free"),
+    ("YT-W03", "YouTube", "Content", "Retention-engineered scripts", "Cold-open hooks + open loops", "Present", "AI-assist", "Free"),
+    ("YT-R01", "YouTube", "Repurposing", "Long-form to Shorts engine", "Clip scoring + reframing", "Final cut", "AI tools + manual", "Free"),
+    ("YT-M02", "YouTube", "Monetization", "Partner Program threshold sprint", "Threshold-closing content plan", "Produce content", "Native", "1K subs + 4K hrs / 10M Shorts"),
+    ("FB-E02", "Facebook", "Community", "Group launch & management", "Structure, rituals & rules", "Community manage", "Native", "Free"),
+    ("FB-A01", "Facebook", "Advertising", "Lead-gen system (ads + CRM)", "Ad + form + CRM plan", "Approve & run", "Native", "Paid budgets"),
+    ("FB-M02", "Facebook", "Monetization", "Stars & Subscriptions readiness", "Eligibility assessment", "Enable features", "Native", "500 fol (Stars)"),
+    ("TH-W01", "Threads", "Writing", "Thread ghostwriting", "Hook-led thread chains", "Approve voice", "AI-assist", "Free"),
+    ("X-C01", "X", "Writing", "X thread writing", "Value-chain thread drafts", "Approve", "AI-assist", "Free"),
+    ("X-E01", "X", "Engagement", "Reply growth program", "High-value reply drafts", "Send", "AI-assist", "Free"),
+    ("X-M01", "X", "Monetization", "Ad revenue-share eligibility sprint", "Impression plan", "Execute", "Native", "Premium + 500 verified fol + 5M impr"),
+    ("LI-P01", "LinkedIn", "Profile", "Headline & About ghostwriting", "Narrative drafts in your voice", "Approve", "Native", "Free"),
+    ("LI-C01", "LinkedIn", "Content", "Executive post ghostwriting", "3-5 posts/week in your voice", "Approve & engage", "AI + manual", "Free"),
+    ("LI-C03", "LinkedIn", "Content", "Newsletter program", "Naming + first issues", "Write/approve", "Native", "~150+ followers"),
+    ("PI-S01", "Pinterest", "Discovery", "Pinterest SEO (boards + pins)", "Keyword maps + pin copy", "Design & approve", "Native Trends", "Business account"),
+    ("PI-A01", "Pinterest", "Advertising", "Pinterest shopping ads", "Campaign + tag setup", "Approve", "Native", "Paid budgets"),
+    ("SN-C01", "Snapchat", "Content", "Spotlight content system", "Volume pipeline planning", "Film", "Manual + AI", "Free"),
+    ("RD-W01", "Reddit", "Writing", "AMA preparation & execution", "Question seeding + answer drafts", "Approve & run", "AI + manual", "Free"),
+    ("RD-C01", "Reddit", "Community", "Branded subreddit launch", "Structure + rules drafts", "Moderate", "Native", "Free"),
+    ("DC-C01", "Discord", "Community", "Discord server architecture", "Channel/role/onboarding plans", "Build & moderate", "Native", "Free"),
+    ("TW-M01", "Twitch", "Monetization", "Affiliate & Partner sprint", "Schedule/consistency plan", "Stream", "Native", "50 fol / 75 ACV"),
+    ("TW-R01", "Twitch", "Repurposing", "Stream to clips engine", "Clip scoring", "Final cut", "AI + manual", "Free"),
+    ("TG-SVC01", "Telegram", "Community", "Broadcast channel ops", "Content calendar", "Run channel", "Native", "Free"),
+    ("WA-SVC01", "WhatsApp", "Commerce", "Conversational commerce setup", "Catalog + quick-reply flows", "Configure", "Native app/API", "Free"),
+    ("GB-SVC02", "Google Business Profile", "Local", "Review generation & response", "Response drafts", "Approve & send", "Native", "Free"),
+    ("GB-SVC01", "Google Business Profile", "Local", "GBP optimization", "Categories/services/posts plan", "Implement", "Native", "Free"),
+    ("OC-01", "Cross-platform", "Owned channels", "Email list building", "Funnel copy drafting", "Approve & wire", "3P + AI", "Free"),
+    ("OC-02", "Cross-platform", "Owned channels", "Newsletter writing", "Draft editions", "Approve voice", "AI-assist", "Free"),
+    ("OC-05", "Cross-platform", "Owned channels", "Lead-magnet creation", "Draft magnet", "Approve", "AI-assist", "Free"),
+    ("PD-05", "Podcast", "Repurposing", "Podcast to social clip engine", "Clip scoring + captions", "Final cut", "AI + manual", "Free"),
+    ("LG-01", "Cross-platform", "Compliance", "Disclosure & FTC/ASA compliance", "Disclosure wording", "Legal review", "Manual", "Required"),
+    ("LG-04", "Cross-platform", "Compliance", "Creator/UGC contracts", "Contract template drafts", "Negotiate & sign", "Manual", "Required"),
+    ("PR-01", "Cross-platform", "Pricing", "Sponsorship pricing model", "CPM/engagement valuation", "Approve & quote", "AI-assist", "Free"),
+    ("PR-05", "Cross-platform", "Pricing", "Usage-rights multipliers", "Rights multiplier calc", "Negotiate", "AI-assist", "Free"),
+    ("DP-01", "Cross-platform", "Products", "Product-ladder design", "Ladder architecture", "Approve", "Manual", "Free"),
+    ("RM-02", "Cross-platform", "Rights", "Whitelisting agreements", "Scope/pricing calc", "Negotiate", "Manual", "Free"),
+    ("AC-02", "Cross-platform", "Accessibility", "Caption & alt-text standards", "Auto-captions + alt text", "Proofread", "Native + manual", "Free"),
+    ("MK-02", "Cross-platform", "Risk", "Platform diversification roadmap", "Sequencing plan", "Approve", "Manual", "Free"),
+    ("AN-RPT", "Cross-platform", "Analytics", "Monthly reporting & insights", "Report drafts + anomaly flags", "Narrate & present", "AI + manual", "Free"),
+]
+
+@app.get("/api/services")
+async def list_services(user=Depends(require_user)):
+    await jitter(0.1, 0.3)
+    items = [{"id": r[0], "platform": r[1], "category": r[2], "service": r[3],
+              "ai": r[4], "human": r[5], "ntp": r[6], "eligibility": r[7]} for r in SERVICES_CATALOG]
+    platforms = sorted({r[1] for r in SERVICES_CATALOG}, key=lambda p: (p == "Cross-platform", p))
+    categories = sorted({r[2] for r in SERVICES_CATALOG})
+    return {"items": items, "platforms": platforms, "categories": categories}
+
+@app.post("/api/proposal")
+async def build_proposal(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    client = (body.get("client") or "").strip()
+    if not client:
+        raise HTTPException(400, "Give the proposal a client name")
+    selected = body.get("items") or []
+    if not selected:
+        raise HTTPException(400, "Add at least one service to the proposal")
+    notes = (body.get("notes") or "").strip()
+    currency = body.get("currency") or "$"
+    by_id = {r[0]: r for r in SERVICES_CATALOG}
+    lines, total, priced = [], 0.0, 0
+    for it in selected:
+        rec = by_id.get(it.get("id"))
+        if not rec:
+            continue
+        price = it.get("price")
+        try:
+            price = float(price) if price not in (None, "") else None
+        except (TypeError, ValueError):
+            price = None
+        price_txt = f"{currency}{price:,.0f}" if price is not None else "TBD"
+        if price is not None:
+            total += price
+            priced += 1
+        lines.append({"id": rec[0], "platform": rec[1], "category": rec[2], "service": rec[3],
+                      "ai": rec[4], "human": rec[5], "eligibility": rec[7], "price": price_txt})
+    if not lines:
+        raise HTTPException(400, "No valid services selected")
+    text = [f"Service Proposal - {client}", f"Prepared by {user['workspace']}", ""]
+    text.append("SCOPE OF SERVICES")
+    for i, l in enumerate(lines, 1):
+        text.append(f"{i}. {l['service']}  [{l['platform']} / {l['category']}]  -  {l['price']}")
+        text.append(f"   AI assists: {l['ai']} | You deliver: {l['human']} | Eligibility: {l['eligibility']}")
+    text.append("")
+    if priced:
+        plural = "s" if priced != 1 else ""
+        text.append(f"TOTAL ({priced} priced item{plural}): {currency}{total:,.0f}"
+                    + ("   (unpriced items marked TBD)" if priced < len(lines) else ""))
+    text.append("")
+    text.append("PROCESS")
+    text.append("1) Kickoff & access   2) Audit & strategy   3) Production & approvals   4) Publish & optimize   5) Report")
+    if notes:
+        text += ["", "NOTES", notes]
+    proposal = "\n".join(text)
+    log_activity(user["id"], "milestone", f"Proposal built for {client} ({len(lines)} services)")
+    return {"client": client, "count": len(lines), "total": total, "priced": priced,
+            "lines": lines, "text": proposal}
+
+
 # ---- quick replies
 
 @app.get("/api/quick-replies")

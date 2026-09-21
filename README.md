@@ -68,6 +68,15 @@ approval from teammates), 4 campaigns, 9 inbox messages, 4 teammates, 6 media as
 5 invoices, 3 competitors, 3 tracked keywords, 3 weekly reports and 180 days of analytics.
 New registrations start empty to demonstrate every empty state.
 
+## Services Studio (v2.4)
+
+Turn the social-media service catalogue into a sellable business.
+
+- **Services catalogue** — 61 sellable services across 17 platforms (TikTok, Instagram, YouTube, Facebook, X, LinkedIn, Pinterest, Reddit, Discord, Twitch, Google Business Profile, owned channels, compliance, pricing and more), each showing what the AI assists with, what the human delivers, whether it is native or third-party, and its eligibility.
+- **Proposal builder** — pick any services, set your own prices (never invented for you), add a client name and notes, and get a formatted scope-of-work proposal. Copy as text or download a styled HTML document.
+
+This pairs with the Revenue layer: find services to sell, price them, send the proposal, then track the resulting deal in the pipeline.
+
 ## Revenue & Money layer (v2.1)
 
 Turn a following into income without touching any official social APIs.
