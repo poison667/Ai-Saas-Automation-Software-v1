@@ -76,6 +76,8 @@ Turn a following into income without touching any official social APIs.
 - **Money dashboard** — won this month, pipeline value, win rate, average deal size, plus a hand-rolled SVG bar chart of won revenue over the last 6 months. A compact revenue widget also appears on the main dashboard.
 - **Automatic Rate Card** — pricing is computed from your connected accounts' follower counts and 30-day engagement (a 3% engagement rate is the ×1.0 benchmark; strong engagement raises your prices, weak engagement lowers them). Copy the whole card as plain text to send to brands.
 
+- **Media Kit studio** — a one-page brand pitch assembled live from your data: total followers, engagement, 30-day reach, audience growth, per-platform breakdown, your rate card and brands you've worked with. Copy it as text or download a styled HTML version to attach to pitches.
+
 No bots, no auto-posting, no official-API access: Lumina prepares the numbers and the words, you close the deal and publish manually.
 
 ## Launch & Monetize toolkit (v2)

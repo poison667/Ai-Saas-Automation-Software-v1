@@ -1997,6 +1997,35 @@ async def rate_card(user=Depends(require_user)):
             "notes": ["Rates include 30-day content usage rights.",
                       "Add 25% for exclusivity, whitelisting or extra revisions."]}
 
+@app.get("/api/media-kit")
+async def media_kit(user=Depends(require_user)):
+    with closing(db()) as conn:
+        u = dict(conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone())
+        accounts = [dict(r) for r in conn.execute(
+            "SELECT * FROM accounts WHERE user_id=? AND status='connected' ORDER BY followers DESC", (user["id"],))]
+        series = [dict(r) for r in conn.execute(
+            "SELECT date, followers, reach, impressions, engagement FROM analytics WHERE user_id=? AND date>=? ORDER BY date",
+            (user["id"], day_iso(-29)))]
+        won = conn.execute("SELECT COUNT(*) c, COALESCE(SUM(amount),0) s FROM deals WHERE user_id=? AND status='won'",
+                           (user["id"],)).fetchone()
+        brands = [r["brand"] for r in conn.execute(
+            "SELECT brand FROM deals WHERE user_id=? AND status='won' ORDER BY date(deal_date) DESC, id DESC LIMIT 6", (user["id"],))]
+    followers = sum(a["followers"] for a in accounts)
+    reach30 = sum(r["reach"] for r in series)
+    impressions30 = sum(r["impressions"] for r in series)
+    eng = round(sum(r["engagement"] for r in series) / len(series), 2) if series else 0.0
+    growth = 0
+    if len(series) >= 2 and series[0]["followers"]:
+        growth = round(100 * (series[-1]["followers"] - series[0]["followers"]) / series[0]["followers"], 1)
+    return {
+        "workspace": u["workspace"], "name": u["name"], "plan": u["plan"],
+        "followers": followers, "engagement": eng, "reach30": reach30,
+        "impressions30": impressions30, "growth": growth,
+        "platforms": [{"platform": a["platform"], "handle": a["handle"], "display_name": a["display_name"],
+                       "followers": a["followers"], "engagement": a["engagement"]} for a in accounts],
+        "brands_worked_with": brands, "deals_won": won["c"], "earned_total": won["s"],
+    }
+
 # ---- quick replies
 
 @app.get("/api/quick-replies")

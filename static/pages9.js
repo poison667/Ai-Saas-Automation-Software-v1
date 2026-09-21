@@ -196,6 +196,129 @@ function openDealModal(deal) {
   };
 }
 
+/* ---------------- media kit studio ---------------- */
+
+ROUTES.mediakit = {
+  title: "Media Kit",
+  subtitle: "Your one-page pitch to brands — built from live data.",
+  async render(page) {
+    refreshCurrentList = () => ROUTES.mediakit.render(document.getElementById("page"));
+    page.innerHTML = `
+      <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn primary" id="mk-copy">${icon("copy", 15)} Copy as text</button>
+        <button class="btn" id="mk-download">${icon("file", 15)} Download HTML</button>
+      </div>
+      <div id="mk-preview"><div class="card"><div class="skel skel-block" style="height:380px"></div></div></div>`;
+    let mk, rc;
+    try { [mk, rc] = await Promise.all([api("/api/media-kit"), api("/api/rate-card")]); }
+    catch (e) { toast(e.message, { type: "error" }); return; }
+    renderMediaKit(mk, rc);
+    document.getElementById("mk-copy").onclick = () => copyText(mediaKitText(mk, rc), "Media kit");
+    document.getElementById("mk-download").onclick = () => downloadMediaKit(mk, rc);
+  },
+};
+
+function fmtK(n) {
+  n = n || 0;
+  return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(Math.round(n));
+}
+
+function mediaKitText(mk, rc) {
+  let t = `${mk.workspace} — Media Kit\n`;
+  t += `${mk.followers.toLocaleString()} total followers · ${mk.engagement}% engagement · ${fmtK(mk.reach30)} reach (30 days)\n\n`;
+  t += "PLATFORMS\n";
+  mk.platforms.forEach(p => t += `• ${PLATFORMS[p.platform]?.name || p.platform} — ${p.handle}: ${p.followers.toLocaleString()} followers, ${p.engagement}% engagement\n`);
+  if (rc.platforms.length) {
+    t += "\nRATES\n";
+    rc.platforms.forEach(p => t += `${PLATFORMS[p.platform]?.name || p.platform}: post $${p.prices.post} · story $${p.prices.story} · video $${p.prices.video} · bundle $${p.prices.bundle}\n`);
+    t += "\n" + rc.notes.map(n => "• " + n).join("\n") + "\n";
+  }
+  if (mk.brands_worked_with.length) t += `\nWORKED WITH\n${mk.brands_worked_with.join(" · ")}\n`;
+  return t;
+}
+
+function renderMediaKit(mk, rc) {
+  const el = document.getElementById("mk-preview");
+  const stats = [
+    ["Total followers", mk.followers.toLocaleString()], ["Engagement", mk.engagement + "%"],
+    ["Reach · 30 days", fmtK(mk.reach30)], ["Audience growth", (mk.growth >= 0 ? "+" : "") + mk.growth + "%"],
+  ];
+  el.innerHTML = `
+  <div class="card fade-in" style="max-width:760px;margin:0 auto;border-color:rgba(139,92,246,.4)">
+    <div style="text-align:center;padding:10px 0 18px;border-bottom:1px solid var(--border)">
+      <div style="width:64px;height:64px;border-radius:18px;background:var(--grad);display:inline-flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff">${esc(mk.workspace.charAt(0))}</div>
+      <h2 style="margin:10px 0 2px" class="grad-text">${esc(mk.workspace)}</h2>
+      <div class="faint" style="font-size:12.5px">Creator media kit · ${mk.platforms.length} platform${mk.platforms.length === 1 ? "" : "s"} · ${mk.deals_won} collaboration${mk.deals_won === 1 ? "" : "s"} completed</div>
+    </div>
+    <div class="grid cols-4" style="gap:10px;margin:18px 0">
+      ${stats.map(([l, v]) => `<div class="card" style="margin:0;padding:12px;text-align:center"><div class="faint" style="font-size:10.5px">${l}</div><b style="font-size:17px">${v}</b></div>`).join("")}
+    </div>
+    ${mk.platforms.length ? `
+    <h3 style="font-size:13px;letter-spacing:.4px;text-transform:uppercase" class="faint">Audience by platform</h3>
+    <div style="display:flex;flex-direction:column;gap:8px;margin:10px 0 18px">
+      ${mk.platforms.map(p => `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--panel-2);border:1px solid var(--border);border-radius:10px">
+          ${platIcon(p.platform, 13)} <b style="font-size:13px">${esc(p.display_name || p.handle)}</b>
+          <span class="faint" style="font-size:12px">${esc(p.handle)}</span><span style="flex:1"></span>
+          <b style="font-size:13px">${p.followers.toLocaleString()}</b>
+          <span class="badge cyan">${p.engagement}% eng</span>
+        </div>`).join("")}
+    </div>` : ""}
+    ${rc.platforms.length ? `
+    <h3 style="font-size:13px;letter-spacing:.4px;text-transform:uppercase" class="faint">Rates</h3>
+    <div style="overflow-x:auto;margin:10px 0 18px">
+      <table class="table" style="margin:0"><thead><tr><th>Platform</th><th>Post</th><th>Story set</th><th>Video</th><th>Bundle</th></tr></thead><tbody>
+        ${rc.platforms.map(p => `<tr><td>${platIcon(p.platform, 11)} ${PLATFORMS[p.platform]?.name || p.platform}</td>
+          <td><b>$${p.prices.post}</b></td><td>$${p.prices.story}</td><td>$${p.prices.video}</td><td>$${p.prices.bundle}</td></tr>`).join("")}
+      </tbody></table>
+    </div>` : ""}
+    ${mk.brands_worked_with.length ? `
+    <h3 style="font-size:13px;letter-spacing:.4px;text-transform:uppercase" class="faint">Brands worked with</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      ${mk.brands_worked_with.map(b => `<span class="badge purple">${esc(b)}</span>`).join("")}
+    </div>` : ""}
+    <p class="faint" style="font-size:11px;margin-top:18px">Generated by Lumina · figures update automatically from connected accounts</p>
+  </div>`;
+}
+
+function downloadMediaKit(mk, rc) {
+  const rows = rc.platforms.map(p => `
+      <tr><td>${PLATFORMS[p.platform]?.name || p.platform}</td><td>$${p.prices.post}</td><td>$${p.prices.story}</td><td>$${p.prices.video}</td><td>$${p.prices.bundle}</td></tr>`).join("");
+  const plats = mk.platforms.map(p => `
+      <div class="row"><b>${PLATFORMS[p.platform]?.name || p.platform}</b> — ${p.handle} · ${p.followers.toLocaleString()} followers · ${p.engagement}% engagement</div>`).join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(mk.workspace)} — Media Kit</title>
+<style>body{font-family:Segoe UI,Arial,sans-serif;background:#0a0c12;color:#e8eaf2;max-width:720px;margin:32px auto;padding:0 20px}
+h1{background:linear-gradient(90deg,#8b5cf6,#d946ef);-webkit-background-clip:text;background-clip:text;color:transparent;margin:8px 0 2px}
+.sub{color:#9aa1b5;font-size:13px}.stats{display:flex;gap:12px;margin:22px 0;flex-wrap:wrap}
+.stat{flex:1;min-width:140px;background:#11141d;border:1px solid #232736;border-radius:12px;padding:14px;text-align:center}
+.stat b{font-size:20px;display:block}.stat span{color:#9aa1b5;font-size:11px}
+h2{font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#9aa1b5;border-bottom:1px solid #232736;padding-bottom:6px}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px 10px;border-bottom:1px solid #232736;text-align:left}
+.row{padding:6px 0;font-size:14px}.badges span{display:inline-block;background:#8b5cf622;border:1px solid #8b5cf666;color:#c4b5fd;border-radius:20px;padding:4px 12px;margin:4px 6px 0 0;font-size:12px}
+.foot{color:#6b7280;font-size:11px;margin-top:26px}</style></head><body>
+<h1>${esc(mk.workspace)}</h1>
+<div class="sub">Creator media kit · ${mk.followers.toLocaleString()} followers · ${mk.engagement}% engagement · ${fmtK(mk.reach30)} reach in the last 30 days</div>
+<div class="stats">
+  <div class="stat"><b>${mk.followers.toLocaleString()}</b><span>Total followers</span></div>
+  <div class="stat"><b>${mk.engagement}%</b><span>Engagement rate</span></div>
+  <div class="stat"><b>${fmtK(mk.reach30)}</b><span>Reach · 30 days</span></div>
+  <div class="stat"><b>${(mk.growth >= 0 ? "+" : "") + mk.growth}%</b><span>Audience growth</span></div>
+</div>
+<h2>Audience by platform</h2>${plats || "<div class='row'>No connected platforms yet.</div>"}
+${rc.platforms.length ? `<h2>Rates</h2><table><tr><th>Platform</th><th>Post</th><th>Story set</th><th>Video</th><th>Bundle</th></tr>${rows}</table>
+<p style="font-size:12px;color:#9aa1b5">${rc.notes.map(n => "• " + esc(n)).join("<br>")}</p>` : ""}
+${mk.brands_worked_with.length ? `<h2>Brands worked with</h2><div class="badges">${mk.brands_worked_with.map(b => `<span>${esc(b)}</span>`).join("")}</div>` : ""}
+<div class="foot">Generated by Lumina — figures update automatically from connected accounts.</div>
+</body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${mk.workspace.replace(/[^\w-]+/g, "-").toLowerCase()}-media-kit.html`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast("Media kit downloaded — open it or attach it to your pitch");
+}
+
 async function openRateCardModal() {
   const m = openModal({
     title: "Your rate card",

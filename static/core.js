@@ -377,6 +377,7 @@ const NAV = [
   { id: "notifications", label: "Notifications", icon: "bell" },
   { id: "reports", label: "Reports", icon: "file" },
   { id: "revenue", label: "Revenue", icon: "dollar" },
+  { id: "mediakit", label: "Media Kit", icon: "award" },
   { section: "Create" },
   { id: "generator", label: "AI Generator", icon: "sparkles" },
   { id: "ideas", label: "Content Ideas", icon: "zap" },
