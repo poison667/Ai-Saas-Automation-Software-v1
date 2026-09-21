@@ -68,6 +68,23 @@ approval from teammates), 4 campaigns, 9 inbox messages, 4 teammates, 6 media as
 5 invoices, 3 competitors, 3 tracked keywords, 3 weekly reports and 180 days of analytics.
 New registrations start empty to demonstrate every empty state.
 
+## Real AI Engine (v3.0)
+
+The whole product now runs on a **real, pluggable AI engine** — not canned text.
+
+**AI Engine page** (`AI Engine` in the sidebar):
+- **Connect ANY AI**: OpenAI, Anthropic Claude, Google Gemini, Groq, **Ollama (100% free, local, private)**, or any OpenAI-compatible endpoint (LM Studio, vLLM, OpenRouter). Built-in demo engine works offline with no key.
+- **Test connection** before saving; if your provider is unreachable, Lumina safely falls back to the built-in engine.
+- With your own key, generations are **unlimited** — Lumina charges no credits for provider-backed AI.
+- **Prompt Studio**: edit the hidden system prompt behind every feature (generator, profiles, threads, carousels, pitches, negotiation, assistant, image prompter). Change behavior live — no reinstall.
+- **Brand Voice Trainer**: paste your past writing and the AI learns your tone, then rewrites ALL output to sound like you.
+
+**AI Studio**: a deep strategist chat. Connected providers give live, unlimited answers; built-in engine gives quick strategy answers (2 credits).
+
+**Image Studio**: resize any photo to any resolution (square / portrait / story / 4K / custom WxH, crop-fit-stretch, PNG/JPG/WebP + quality) — fully offline; plus AI image generation when an OpenAI-compatible provider is connected.
+
+Every generator, profile, thread, carousel, pitch and negotiation tool now prefers your connected AI and falls back automatically.
+
 ## Invoice Studio (v2.5)
 
 Close the money loop: proposal → won deal → invoice.

@@ -18,6 +18,8 @@ import hashlib
 import hmac as hmac_mod
 import random
 import asyncio
+import ai_engine
+import httpx
 import datetime as dt
 from contextlib import closing
 from typing import Optional
@@ -1539,6 +1541,273 @@ def apply_brand_voice(content, voice):
         content = content.rstrip() + "\n\n" + sig
     return content
 
+# ---- Real AI engine (v3.0) — connect any AI provider ----
+
+VALID_PROVIDERS = ("builtin", "ollama", "openai", "anthropic", "gemini", "groq", "custom")
+
+DEFAULT_SYSTEMS = {
+    "generator": "You are Lumina, an expert AI social-media strategist. Write scroll-stopping social content. Return ONLY minified JSON: {\"content\": \"the post text\", \"hashtags\": [\"tag\", \"...\"], \"bestTime\": \"HH:MM\", \"confidence\": 0-100}",
+    "profile": "You are Lumina, an expert AI branding strategist. Return ONLY minified JSON: {\"bios\": [3 bio strings under 160 chars], \"handles\": [5 handles without @], \"first_post\": \"first post text\", \"hashtags\": [\"tag\", \"...\"], \"avatar_prompt\": \"image prompt for avatar\"}",
+    "thread": "You are Lumina, an expert AI content writer. Write an engaging multi-post thread. Return ONLY minified JSON: {\"posts\": [\"post 1\", \"post 2\", \"...\"]} (hook first, CTA last)",
+    "carousel": "You are Lumina, an expert AI content designer. Return ONLY minified JSON: {\"slides\": [7 short slide texts, first is a cover hook, last is a CTA]}",
+    "pitch": "You are Lumina, an expert AI creator-marketing agent. Write a complete, ready-to-send professional sponsorship pitch email. Plain text with subject line first.",
+    "negotiate": "You are Lumina, an expert AI deal negotiator. Return ONLY minified JSON: {\"reply\": \"the reply message\", \"reasoning\": \"why this works\", \"confidence\": 0-100}",
+    "ask": "You are Lumina, a deeply knowledgeable AI social-media strategist and business coach. Give concrete, specific, actionable answers. Use short paragraphs and lists where useful. Be direct and expert-level.",
+    "image": "You are an expert visual prompt engineer. Expand the user's idea into one vivid, detailed image-generation prompt in English. Reply with ONLY the prompt.",
+}
+
+def _user_prefs(user):
+    try:
+        return json.loads(user.get("prefs") or "{}")
+    except (ValueError, TypeError):
+        return {}
+
+def _parse_json_block(text):
+    if not text:
+        return None
+    t = text.strip()
+    t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+    t = re.sub(r"\s*```$", "", t)
+    start_i = t.find("{")
+    if start_i >= 0:
+        depth = 0
+        for i in range(start_i, len(t)):
+            ch = t[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(t[start_i:i + 1])
+                    except ValueError:
+                        break
+    try:
+        return json.loads(t)
+    except ValueError:
+        return None
+
+async def try_real_ai(user, task_key, prompt, extra_ctx=""):
+    """Try the user's connected provider. Returns text or None (fallback to builtin)."""
+    prefs = _user_prefs(user)
+    if not ai_engine.provider_active(prefs):
+        return None
+    engine = prefs.get("aiEngine") or {}
+    custom = engine.get("customPrompts") or {}
+    system = (custom.get(task_key) or DEFAULT_SYSTEMS.get(task_key) or "").strip()
+    voice = prefs.get("brandVoice") or {}
+    if voice.get("style"):
+        system += "\n\nWrite in this brand voice: " + str(voice["style"])[:600]
+    if extra_ctx:
+        prompt = extra_ctx + "\n\n" + prompt
+    try:
+        return await ai_engine.generate_text(prefs, prompt, system=system or None)
+    except ai_engine.AIEngineError:
+        return None
+
+def _engine_name(user):
+    return ai_engine.provider_active(_user_prefs(user)) or "builtin"
+
+@app.get("/api/ai/engine")
+async def ai_engine_status(user=Depends(require_user)):
+    prefs = _user_prefs(user)
+    cfg = prefs.get("aiEngine") or {}
+    provider = cfg.get("provider") or "builtin"
+    return {
+        "provider": provider,
+        "model": cfg.get("model") or "",
+        "connected": provider != "builtin",
+        "canImage": provider in ("openai", "custom"),
+        "voice_trained": bool((prefs.get("brandVoice") or {}).get("style")),
+    }
+
+@app.get("/api/ai/config")
+async def get_ai_config(user=Depends(require_user)):
+    prefs = _user_prefs(user)
+    cfg = prefs.get("aiEngine") or {}
+    out = dict(ai_engine._cfg(prefs))
+    out["customPrompts"] = cfg.get("customPrompts") or {}
+    out["defaults"] = DEFAULT_SYSTEMS
+    return out
+
+@app.post("/api/ai/config")
+async def save_ai_config(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    provider = body.get("provider") or "builtin"
+    if provider not in VALID_PROVIDERS:
+        raise HTTPException(400, "Unknown provider")
+    api_key = (body.get("apiKey") or "").strip()
+    if provider in ("openai", "anthropic", "gemini", "groq") and not api_key:
+        raise HTTPException(400, "This provider needs an API key")
+    prompts = body.get("customPrompts")
+    if prompts is not None and not isinstance(prompts, dict):
+        raise HTTPException(400, "customPrompts must be an object")
+    clean_prompts = {}
+    if prompts:
+        for k, v in prompts.items():
+            v = (v or "").strip()
+            if v and v != DEFAULT_SYSTEMS.get(k):
+                clean_prompts[k] = v[:2000]
+    cfg = {
+        "provider": provider,
+        "apiKey": api_key,
+        "baseUrl": (body.get("baseUrl") or "").strip()[:300],
+        "model": (body.get("model") or "").strip()[:80],
+        "temperature": max(0.0, min(2.0, float(body.get("temperature", 0.7)))),
+        "maxTokens": max(64, min(4000, int(body.get("maxTokens", 900)))),
+        "customPrompts": clean_prompts,
+    }
+    with closing(db()) as conn:
+        row = conn.execute("SELECT prefs FROM users WHERE id=?", (user["id"],)).fetchone()
+        prefs = json.loads(row["prefs"] or "{}")
+        prefs["aiEngine"] = cfg
+        conn.execute("UPDATE users SET prefs=? WHERE id=?", (json.dumps(prefs), user["id"]))
+        conn.commit()
+    log_activity(user["id"], "ai", f"AI engine set to {provider}" + (f" ({cfg['model']})" if cfg["model"] else ""))
+    return {"ok": True, "provider": provider}
+
+@app.post("/api/ai/test")
+async def test_ai(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    if body.get("provider") and body["provider"] in VALID_PROVIDERS:
+        test_cfg = {"aiEngine": body}
+    else:
+        test_cfg = {"aiEngine": _user_prefs(user).get("aiEngine") or {}}
+    return await ai_engine.test_connection(test_cfg)
+
+@app.get("/api/ai/models")
+async def ai_models(user=Depends(require_user)):
+    return ai_engine.MODELS
+
+@app.post("/api/ai/ask")
+async def ai_ask(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "Ask me anything")
+    history = body.get("history") or []
+    ctx = "\n".join(f"{'You' if m.get('role') == 'user' else 'Lumina'}: {(m.get('content') or '')[:400]}" for m in history[-6:])
+    prefs = _user_prefs(user)
+    if ai_engine.provider_active(prefs):
+        text = await try_real_ai(user, "ask", message, extra_ctx=("Conversation so far:\n" + ctx) if ctx else "")
+        if text is None:
+            raise HTTPException(502, "Your AI provider did not respond — check the AI Engine settings")
+        cost, engine = 0, _engine_name(user)
+        with closing(db()) as conn:
+            limit = PLAN_LIMITS.get(prefs.get("plan", "starter"), 500)
+            u = conn.execute("SELECT ai_credits_used FROM users WHERE id=?", (user["id"],)).fetchone()
+            used = u["ai_credits_used"]
+    else:
+        cost = 2
+        with closing(db()) as conn:
+            limit, used = charge_credits(conn, user["id"], cost)
+            conn.commit()
+        text = _builtin_ask(message)
+        engine = "builtin"
+    log_activity(user["id"], "ai", f"AI Studio asked: “{message[:48]}”")
+    return {"text": text, "engine": engine, "credits_used": cost, "credits_left": limit - used}
+
+_BUILTIN_ASK = (
+    ("Here's my take on “{m}” — three moves that work right now:\n\n1. Open with a hook that names the exact audience and pain point (the first 1.5 seconds decide everything).\n2. Deliver ONE clear takeaway per post — depth beats volume; save-worthy posts get pushed by every algorithm.\n3. End every post with a specific CTA (comment a keyword, save this, share with a friend) and reply to every comment in the first hour.\n\nConsistency on these three compounds fast. Connect a real AI in AI Engine for deeper, unlimited answers."),
+    ("Quick strategy for “{m}”:\n\n• Post when your audience is actually scrolling (check your Analytics heatmap) — usually lunchtime and 7–10pm.\n• Repurpose one strong idea into 3 formats: a hook-driven short, a carousel with the details, and a story poll to collect replies.\n• Track which hook style gets saves/shares and double down — that's your content edge.\n\nPlug in your own AI key under AI Engine for unlimited deep coaching."),
+    ("For “{m}”, the winning play this week:\n\n1. Pick one topic you can own and make a 3-part series — series hook viewers into returning.\n2. Front-load the value: no long intros, the payoff belongs in the first line.\n3. After 48h, kill what flopped and remake your best performer with a new hook.\n\nWant deeper analysis? Connect a real AI provider in AI Engine."),
+)
+
+def _builtin_ask(message):
+    rng = random.Random(hash(message.lower()) & 0xFFFFFFFF)
+    m = message[:80].strip()
+    return rng.choice(_BUILTIN_ASK).format(m=m)
+
+@app.post("/api/ai/voice/train")
+async def train_voice(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    samples = [s.strip() for s in (body.get("samples") or []) if s and s.strip()]
+    if not samples or sum(len(s) for s in samples) < 80:
+        raise HTTPException(400, "Paste at least a few sentences of your past writing (80+ characters)")
+    blob = "\n".join(samples)
+    words = re.findall(r"[\w'’]+", blob.lower())
+    STOP = {"the","a","an","and","or","but","to","of","in","on","for","is","it","that","this","with","you","your","we","our","i","my","are","was","be","at","as","so","if","not","no","yes","have","has","had","do","does","will","can","just","about","more","out","up","get","got","all","me","us","they","them","their","what","when","how","why","there","here","from"}
+    freq = {}
+    for w in words:
+        if w not in STOP and len(w) > 2:
+            freq[w] = freq.get(w, 0) + 1
+    top_words = sorted(freq, key=freq.get, reverse=True)[:8]
+    emoji_n = len(EMOJI_RE.findall(blob))
+    excl = blob.count("!")
+    questions = blob.count("?")
+    sentences = max(1, len(re.split(r"[.!?]+", blob)))
+    avg_len = max(1, len(words) // sentences)
+    style = None
+    real = await try_real_ai(user, "ask",
+        "Analyze this writing and describe the author's brand voice in ONE concise paragraph (tone, energy, signature habits, dos and don'ts). Writing samples:\n" + blob[:2500])
+    if real:
+        style = real.strip()[:600]
+    if not style:
+        style = (f"{'Energetic' if excl > 2 else 'Measured'}, {'emoji-rich' if emoji_n > 3 else 'light on emoji'} "
+                 f"voice with ~{avg_len}-word sentences"
+                 + (", loves questions to pull readers in" if questions > 1 else "")
+                 + (". Signature words: " + ", ".join(top_words[:5]) if top_words else "."))
+    voice = {
+        "style": style,
+        "samples": len(samples),
+        "top_words": top_words,
+        "avg_sentence_len": avg_len,
+        "emoji_density": round(emoji_n / max(1, len(words) / 100), 2),
+        "trained_at": now_iso(),
+        "engine": _engine_name(user),
+    }
+    with closing(db()) as conn:
+        row = conn.execute("SELECT prefs FROM users WHERE id=?", (user["id"],)).fetchone()
+        prefs = json.loads(row["prefs"] or "{}")
+        bv = prefs.get("brandVoice") or {}
+        bv.update({k: voice[k] for k in ("style", "samples", "top_words", "avg_sentence_len", "emoji_density", "trained_at")})
+        prefs["brandVoice"] = bv
+        conn.execute("UPDATE users SET prefs=? WHERE id=?", (json.dumps(prefs), user["id"]))
+        conn.commit()
+    log_activity(user["id"], "ai", f"Brand voice trained on {len(samples)} samples")
+    return voice
+
+@app.post("/api/ai/image")
+async def ai_image(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "Describe the image you want")
+    size = body.get("size") or "1024x1024"
+    if size not in ("1024x1024", "1024x1792", "1792x1024", "512x512"):
+        raise HTTPException(400, "Unsupported size")
+    prefs = _user_prefs(user)
+    prov = ai_engine.provider_active(prefs)
+    if prov not in ("openai", "custom"):
+        raise HTTPException(400, "AI image generation needs an OpenAI-compatible provider connected in AI Engine (OpenAI or custom). Meanwhile, use Image Studio to resize any photo to any resolution.")
+    cfg = ai_engine._cfg(prefs)
+    enhanced = await try_real_ai(user, "image", prompt) or prompt
+    base = (cfg["baseUrl"].rstrip("/") if cfg["baseUrl"] else "https://api.openai.com/v1")
+    payload = {"model": cfg["model"] if cfg["model"].startswith(("dall", "gpt-image", "sd")) else "gpt-image-1",
+               "prompt": enhanced[:900], "size": size, "n": 1}
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            r = await client.post(f"{base}/images/generations",
+                                  headers={"Authorization": f"Bearer {cfg['apiKey']}", "Content-Type": "application/json"},
+                                  json=payload)
+            r.raise_for_status()
+            data = r.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"Image provider error {e.response.status_code}: {e.response.text[:200]}")
+    except Exception as e:
+        raise HTTPException(502, f"Image generation failed: {e}")
+    item = (data.get("data") or [{}])[0]
+    if item.get("b64_json"):
+        image_url = "data:image/png;base64," + item["b64_json"]
+    elif item.get("url"):
+        image_url = item["url"]
+    else:
+        raise HTTPException(502, "Provider returned no image")
+    log_activity(user["id"], "ai", f"AI image generated: “{prompt[:48]}”")
+    return {"image": image_url, "prompt": enhanced[:200], "size": size, "engine": prov}
+
+# ---- AI content generation (real AI first, built-in fallback)
+
 @app.post("/api/ai/generate")
 async def generate(request: Request, user=Depends(require_user)):
     body = await read_json(request)
@@ -1548,26 +1817,48 @@ async def generate(request: Request, user=Depends(require_user)):
     tone = body.get("tone") or "casual"
     plats = body.get("platforms") or ["instagram"]
     length = body.get("length") or "medium"
-    await asyncio.sleep(random.uniform(1.2, 2.0))  # simulated model latency
-    with closing(db()) as conn:
-        u = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
-        limit = PLAN_LIMITS.get(u["plan"], 500)
-        if u["ai_credits_used"] >= limit:
-            raise HTTPException(402, "You're out of AI credits. Upgrade your plan to keep generating.")
-        content, tags, best_time, confidence = ai_generate(topic, tone, plats, length)
-        try:
-            voice = json.loads(u["prefs"] or "{}").get("brandVoice") or {}
-        except ValueError:
-            voice = {}
-        content = apply_brand_voice(content, voice)
-        conn.execute("UPDATE users SET ai_credits_used = ai_credits_used + ? WHERE id=?", (CREDIT_COST, user["id"]))
-        conn.execute("INSERT INTO generations (user_id, topic, tone, platforms, content, hashtags, created_at) VALUES (?,?,?,?,?,?,?)",
-                     (user["id"], topic, tone, json.dumps(plats), content, json.dumps(tags), now_iso()))
-        conn.commit()
-        used = conn.execute("SELECT ai_credits_used FROM users WHERE id=?", (user["id"],)).fetchone()["ai_credits_used"]
-    log_activity(user["id"], "ai", f"AI draft generated for “{topic[:48]}”")
-    return {"content": content, "hashtags": tags, "best_time": best_time, "confidence": confidence,
-            "credits_used": CREDIT_COST, "credits_left": limit - used}
+    prefs = _user_prefs(user)
+    real = await try_real_ai(user, "generator",
+        f"Topic: {topic}\nTone: {tone}\nPlatforms: {', '.join(plats)}\nLength: {length}\nWrite the post content now.",
+        extra_ctx=f"Account niche context: {prefs.get('niche') or topic}")
+    engine = "builtin"
+    if real is not None:
+        parsed = _parse_json_block(real) or {}
+        content = (parsed.get("content") or real).strip()
+        tags = parsed.get("hashtags") or []
+        best_time = parsed.get("bestTime") or "18:00"
+        confidence = int(parsed.get("confidence") or 92)
+        with closing(db()) as conn:
+            u = conn.execute("SELECT ai_credits_used FROM users WHERE id=?", (user["id"],)).fetchone()
+            limit = PLAN_LIMITS.get(u["plan"] if "plan" in u.keys() else "starter", 500)
+            used = u["ai_credits_used"]
+            conn.execute("INSERT INTO generations (user_id, topic, tone, platforms, content, hashtags, created_at) VALUES (?,?,?,?,?,?,?)",
+                         (user["id"], topic, tone, json.dumps(plats), content, json.dumps(tags), now_iso()))
+            conn.commit()
+        engine = _engine_name(user)
+        cost = 0
+    else:
+        await asyncio.sleep(random.uniform(1.2, 2.0))  # simulated model latency
+        with closing(db()) as conn:
+            u = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+            limit = PLAN_LIMITS.get(u["plan"], 500)
+            if u["ai_credits_used"] >= limit:
+                raise HTTPException(402, "You're out of AI credits. Upgrade your plan — or connect your own AI key in AI Engine for unlimited generations.")
+            content, tags, best_time, confidence = ai_generate(topic, tone, plats, length)
+            try:
+                voice = json.loads(u["prefs"] or "{}").get("brandVoice") or {}
+            except ValueError:
+                voice = {}
+            content = apply_brand_voice(content, voice)
+            conn.execute("UPDATE users SET ai_credits_used = ai_credits_used + ? WHERE id=?", (CREDIT_COST, user["id"]))
+            conn.execute("INSERT INTO generations (user_id, topic, tone, platforms, content, hashtags, created_at) VALUES (?,?,?,?,?,?,?)",
+                         (user["id"], topic, tone, json.dumps(plats), content, json.dumps(tags), now_iso()))
+            conn.commit()
+            used = conn.execute("SELECT ai_credits_used FROM users WHERE id=?", (user["id"],)).fetchone()["ai_credits_used"]
+        cost = CREDIT_COST
+    log_activity(user["id"], "ai", f"AI draft generated for “{topic[:48]}” ({engine})")
+    return {"content": content, "hashtags": tags, "bestTime": best_time, "confidence": confidence,
+            "engine": engine, "credits_used": cost, "credits_left": limit - used}
 
 # ---- AI rewrite
 
@@ -1853,13 +2144,32 @@ async def ai_profile_endpoint(request: Request, user=Depends(require_user)):
     tone = body.get("tone") or "casual"
     name = body.get("name") or ""
     platform = body.get("platform") or "instagram"
+    real = await try_real_ai(user, "profile",
+        f"Niche: {niche}\nTone: {tone}\nCreator or brand name: {name or 'not set'}\nPlatform: {platform}\nCreate the full profile kit now.")
+    if real is not None:
+        parsed = _parse_json_block(real) or {}
+        if parsed.get("bios"):
+            result = {
+                "bios": [str(b)[:200] for b in parsed.get("bios", [])][:3],
+                "handles": [str(h).lstrip("@")[:30] for h in parsed.get("handles", [])][:5],
+                "first_post": str(parsed.get("first_post") or "")[:500],
+                "hashtags": parsed.get("hashtags") or [],
+                "avatar_prompt": str(parsed.get("avatar_prompt") or "")[:300],
+                "platform": platform,
+            }
+            with closing(db()) as conn:
+                u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
+                limit = PLAN_LIMITS.get(u["plan"], 500)
+                used = u["ai_credits_used"]
+            log_activity(user["id"], "ai", f"Profile kit generated for “{niche[:48]}” ({_engine_name(user)})")
+            return {**result, "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
     await asyncio.sleep(random.uniform(1.0, 1.8))
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
         result = ai_profile(niche, tone, name, platform)
         conn.commit()
     log_activity(user["id"], "ai", f"Profile kit generated for “{niche[:48]}”")
-    return {**result, "credits_used": LAUNCH_COST, "credits_left": limit - used}
+    return {**result, "engine": "builtin", "credits_used": LAUNCH_COST, "credits_left": limit - used}
 
 @app.post("/api/ai/thread")
 async def ai_thread_endpoint(request: Request, user=Depends(require_user)):
@@ -1868,13 +2178,26 @@ async def ai_thread_endpoint(request: Request, user=Depends(require_user)):
     if not topic:
         raise HTTPException(400, "Give the thread a topic")
     tone = body.get("tone") or "casual"
+    real = await try_real_ai(user, "thread",
+        f"Topic: {topic}\nTone: {tone}\nPosts: {body.get('count') or 5}\nWrite the thread now.")
+    if real is not None:
+        parsed = _parse_json_block(real) or {}
+        posts = [str(p).strip() for p in parsed.get("posts", []) if str(p).strip()]
+        if len(posts) >= 3:
+            with closing(db()) as conn:
+                u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
+                limit = PLAN_LIMITS.get(u["plan"], 500)
+                used = u["ai_credits_used"]
+            log_activity(user["id"], "ai", f"Thread generated for “{topic[:48]}” ({_engine_name(user)})")
+            return {"posts": posts[:12], "count": len(posts[:12]), "topic": topic,
+                    "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
     await asyncio.sleep(random.uniform(1.0, 1.8))
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
         result = ai_thread(topic, tone, body.get("count") or 5)
         conn.commit()
     log_activity(user["id"], "ai", f"Thread generated for “{topic[:48]}”")
-    return {**result, "credits_used": LAUNCH_COST, "credits_left": limit - used}
+    return {**result, "engine": "builtin", "credits_used": LAUNCH_COST, "credits_left": limit - used}
 
 @app.post("/api/ai/carousel")
 async def ai_carousel_endpoint(request: Request, user=Depends(require_user)):
@@ -1883,13 +2206,30 @@ async def ai_carousel_endpoint(request: Request, user=Depends(require_user)):
     if not topic:
         raise HTTPException(400, "Give the carousel a topic")
     tone = body.get("tone") or "casual"
+    real = await try_real_ai(user, "carousel",
+        f"Topic: {topic}\nTone: {tone}\nWrite the 7-slide carousel now.")
+    if real is not None:
+        parsed = _parse_json_block(real) or {}
+        slides_txt = [str(s).strip() for s in parsed.get("slides", []) if str(s).strip()]
+        if len(slides_txt) >= 4:
+            slides = []
+            for i, txt in enumerate(slides_txt[:7]):
+                stype = "cover" if i == 0 else ("cta" if i == len(slides_txt[:7]) - 1 else "tip")
+                slides.append({"n": i + 1, "type": stype, "title": txt[:80], "caption": txt})
+            with closing(db()) as conn:
+                u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
+                limit = PLAN_LIMITS.get(u["plan"], 500)
+                used = u["ai_credits_used"]
+            log_activity(user["id"], "ai", f"Carousel generated for “{topic[:48]}” ({_engine_name(user)})")
+            return {"slides": slides, "topic": topic,
+                    "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
     await asyncio.sleep(random.uniform(1.0, 1.8))
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
         result = ai_carousel(topic, tone)
         conn.commit()
     log_activity(user["id"], "ai", f"Carousel generated for “{topic[:48]}”")
-    return {**result, "credits_used": LAUNCH_COST, "credits_left": limit - used}
+    return {**result, "engine": "builtin", "credits_used": LAUNCH_COST, "credits_left": limit - used}
 
 @app.post("/api/ai/launchkit")
 async def ai_launchkit_endpoint(request: Request, user=Depends(require_user)):
@@ -2155,12 +2495,32 @@ async def ai_pitch_endpoint(request: Request, user=Depends(require_user)):
     angle = body.get("angle") if body.get("angle") in PITCH_ANGLES else "intro"
     await asyncio.sleep(random.uniform(1.0, 1.8))
     mk = await media_kit(user)
+    contact = (body.get("contact") or "").strip()
+    real = await try_real_ai(user, "pitch",
+        f"Brand to pitch: {brand}\nContact: {contact or 'not provided'}\nAngle: {angle}\n"
+        f"My stats: {mk.get('followers',0)} followers, engagement {mk.get('engagement',0)}%, niches {mk.get('niches') or []}.\nWrite the pitch email now.",
+        extra_ctx="Include a subject line, keep it under 180 words, confident but warm.")
+    if real is not None and len(real) > 80:
+        lines = [l for l in real.strip().split("\n") if l.strip()]
+        if lines and lines[0].lower().startswith("subject"):
+            subject = lines[0].split(":", 1)[1].strip()
+            email = "\n".join(lines[1:]).strip()
+        else:
+            subject = f"Partnership idea for {brand}"
+            email = real.strip()
+        with closing(db()) as conn:
+            u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
+            limit = PLAN_LIMITS.get(u["plan"], 500)
+            used = u["ai_credits_used"]
+        log_activity(user["id"], "ai", f"Brand pitch drafted for “{brand[:48]}” ({_engine_name(user)})")
+        return {"subject": subject, "body": email, "angle": angle, "opener": email.split("\n")[0][:120],
+                "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], PITCH_COST)
         conn.commit()
-    result = ai_pitch(brand, (body.get("contact") or "").strip(), angle, mk)
+    result = ai_pitch(brand, contact, angle, mk)
     log_activity(user["id"], "ai", f"Brand pitch drafted for “{brand[:48]}”")
-    return {**result, "credits_used": PITCH_COST, "credits_left": limit - used}
+    return {**result, "engine": "builtin", "credits_used": PITCH_COST, "credits_left": limit - used}
 
 @app.post("/api/ai/negotiate")
 async def ai_negotiate_endpoint(request: Request, user=Depends(require_user)):
@@ -2168,12 +2528,29 @@ async def ai_negotiate_endpoint(request: Request, user=Depends(require_user)):
     scenario = body.get("scenario") if body.get("scenario") in NEGOTIATE_SCENARIOS else "lowball"
     await asyncio.sleep(random.uniform(1.0, 1.8))
     mk = await media_kit(user)
+    details = (body.get("details") or "").strip()
+    real = await try_real_ai(user, "negotiate",
+        f"Scenario: {scenario}\nDetails: {details or 'none given'}\n"
+        f"My stats: {mk.get('followers',0)} followers, engagement {mk.get('engagement',0)}%.\nCoach me on the reply.")
+    if real is not None:
+        parsed = _parse_json_block(real) or {}
+        if parsed.get("reply"):
+            with closing(db()) as conn:
+                u = conn.execute("SELECT ai_credits_used, plan FROM users WHERE id=?", (user["id"],)).fetchone()
+                limit = PLAN_LIMITS.get(u["plan"], 500)
+                used = u["ai_credits_used"]
+            log_activity(user["id"], "ai", f"Negotiation coach: {scenario} ({_engine_name(user)})")
+            return {"scenario": NEGOTIATE_SCENARIOS.get(scenario, scenario),
+                    "playbook": [str(parsed.get("reasoning") or "Personalized by your connected AI"),
+                                 "Crafted live by your AI engine — not a template"],
+                    "reply_template": str(parsed["reply"]), "tone": "confident and collaborative",
+                    "engine": _engine_name(user), "credits_used": 0, "credits_left": limit - used}
     with closing(db()) as conn:
         limit, used = charge_credits(conn, user["id"], NEGOTIATE_COST)
         conn.commit()
-    result = ai_negotiate(scenario, (body.get("details") or "").strip(), mk)
+    result = ai_negotiate(scenario, details, mk)
     log_activity(user["id"], "ai", f"Negotiation coach: {result['scenario']}")
-    return {**result, "credits_used": NEGOTIATE_COST, "credits_left": limit - used}
+    return {**result, "engine": "builtin", "credits_used": NEGOTIATE_COST, "credits_left": limit - used}
 
 # ---- revenue & deals
 
