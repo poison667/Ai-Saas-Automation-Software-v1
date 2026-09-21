@@ -646,7 +646,7 @@ function renderPostsTable() {
       } catch (e) { toast(e.message, { type: "error" }); }
     };
     const pub = tr.querySelector('[data-act="publish"]');
-    if (pub) pub.onclick = () => publishNow(p, tr);
+    if (pub) pub.onclick = () => openPublishAssistant(p);
   });
 }
 

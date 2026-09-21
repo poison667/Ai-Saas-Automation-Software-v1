@@ -120,6 +120,8 @@ const ICON_PATHS = {
   gitBranch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/>',
   helpCircle: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  rocket: '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+  user: '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',
 };
 function icon(name, size = 18, cls = "") {
   const p = ICON_PATHS[name] || "";
@@ -375,6 +377,9 @@ const NAV = [
   { id: "generator", label: "AI Generator", icon: "sparkles" },
   { id: "ideas", label: "Content Ideas", icon: "zap" },
   { id: "trends", label: "Trends", icon: "trendUp" },
+  { id: "profile", label: "Profile Studio", icon: "user" },
+  { id: "studio", label: "Thread & Carousel", icon: "file" },
+  { id: "launch", label: "Launch Kit", icon: "rocket" },
   { id: "posts", label: "Posts", icon: "inbox" },
   { id: "approvals", label: "Approvals", icon: "check", badge: "approvals" },
   { id: "experiments", label: "Experiments", icon: "flask" },

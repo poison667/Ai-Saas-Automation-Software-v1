@@ -1580,6 +1580,272 @@ async def rewrite(request: Request, user=Depends(require_user)):
     return {"content": result, "action": action,
             "credits_used": REWRITE_COST, "credits_left": limit - used}
 
+# ---- Launch & Monetize engine (profile, thread, carousel, launch kit) ----
+
+LAUNCH_COST = 10
+KIT_COST = 15
+
+HANDLE_SUFFIX = ["hq", "studio", "official", "daily", "lab", "hub", "co", "club", "zone", "works"]
+
+VALUE = {
+    "professional": [
+        "Define the metric that actually matters for {topic}, then ignore vanity numbers until it moves.",
+        "Ship a minimum version of {topic} this week — momentum beats perfection every time.",
+        "Audit how you handle {topic} today and cut the one step that adds no value.",
+        "Document your {topic} process so anyone on your team can repeat it without you.",
+        "Set a 30-day review for {topic}; what you measure is what improves.",
+    ],
+    "casual": [
+        "start stupidly small with {topic} — the first version just has to exist",
+        "the trick with {topic}? do it before you feel ready 🙃",
+        "steal what works, skip what doesn't — {topic} has no rulebook",
+        "one tiny win with {topic} today beats a perfect plan next month",
+        "keep a note of every {topic} win, future you will thank you",
+    ],
+    "witty": [
+        "Rule one of {topic}: the 'perfect' plan is the one you never ship.",
+        "We measured {topic} twice. Turns out the first number was optimism.",
+        "Your competition isn't other brands — it's the nap they'd rather take instead of {topic}.",
+        "Automate the boring 80% of {topic}; spend your genius on the interesting 20%.",
+        "If {topic} feels hard, you're doing it live. That's the point.",
+    ],
+    "inspiring": [
+        "Every expert at {topic} was once a beginner who refused to quit.",
+        "Small, consistent steps on {topic} outperform rare bursts of brilliance.",
+        "Your first attempt at {topic} can be rough — it just can't be absent.",
+        "Progress on {topic} compounds quietly; trust the days you can't see results yet.",
+        "The gap between you and {topic} mastery is just reps. Take one today.",
+    ],
+    "bold": [
+        "Go all-in on {topic} for 30 days before you judge whether it works.",
+        "Most people talk about {topic}. Be the one who ships it.",
+        "Raise the stakes on {topic} — safe moves get scrolled past.",
+        "If {topic} doesn't scare you a little, you're not pushing hard enough.",
+        "Dominate {topic} in one narrow lane before expanding anywhere else.",
+    ],
+}
+
+SLIDE_TITLES = ["Start here", "The mistake", "Do this instead", "The shortcut", "The proof", "Make it stick"]
+
+BIO_TEMPLATES = {
+    "professional": [
+        "Helping ambitious teams win at {t}. Clear playbooks, no fluff. ⬇️ Work with us.",
+        "{who} build tools and guides for {t}. Practical, tested, updated weekly.",
+        "Your shortcut to {t}. Strategy, templates, and real results — every week.",
+    ],
+    "casual": [
+        "just a human obsessed with {t} ✨ sharing what actually works",
+        "making {t} feel less overwhelming, one post at a time 🙌",
+        "{t}, but make it simple. follow along 🚀",
+    ],
+    "witty": [
+        "professional overthinker of {t}. occasional genius, mostly vibes.",
+        "we test {t} so you don't have to. you're welcome.",
+        "{t} enthusiast. our metrics are fake but our enthusiasm is real.",
+    ],
+    "inspiring": [
+        "on a mission to make {t} feel possible for everyone 🤍",
+        "small steps, big dreams — exploring {t} out loud.",
+        "here to prove {t} is for people like you. watch us.",
+    ],
+    "bold": [
+        "we're loud about {t} because quiet doesn't move needles.",
+        "{t}, done differently or not at all. join the movement.",
+        "all-in on {t}. if that's too much, you're in the wrong place.",
+    ],
+}
+
+def _niche_words(text):
+    return [w for w in re.findall(r"[A-Za-z0-9]+", (text or "").lower()) if len(w) > 2][:4]
+
+def _handles(niche, name, rng):
+    base = _niche_words(niche)
+    nm = _niche_words(name)
+    seeds = []
+    if base:
+        seeds.append("".join(base[:2])); seeds.append(base[0])
+    if nm:
+        seeds.append("".join(nm[:2])); seeds.append(nm[0])
+    if not seeds:
+        seeds = ["creator"]
+    out, seen = [], set()
+    for s in seeds:
+        for suf in rng.sample(HANDLE_SUFFIX, k=min(4, len(HANDLE_SUFFIX))):
+            h = "@" + (s + suf).lower()
+            if h not in seen:
+                seen.add(h); out.append(h)
+    rng.shuffle(out)
+    return out[:5]
+
+def _tags_from(topic, rng):
+    words = _niche_words(topic)
+    tags = []
+    whole = _camel(words)
+    if whole and len(whole) <= 28:
+        tags.append("#" + whole)
+    for w in words[:3]:
+        t = "#" + w.capitalize()
+        if t not in tags:
+            tags.append(t)
+    extra = rng.sample(GENERIC_TAGS, k=3)
+    tags += [t for t in extra if t not in tags]
+    return tags[:6]
+
+def ai_profile(niche, tone, name, platform):
+    rng = random.Random()
+    tone = tone if tone in BIO_TEMPLATES else "casual"
+    t = (niche or "your niche").strip().rstrip(".")
+    who = (name or "We").strip() or "We"
+    bios = [b.format(t=t, who=who) for b in BIO_TEMPLATES[tone]]
+    handles = _handles(niche, name, rng)
+    hook = rng.choice(HOOKS[tone]).format(topic=t.lower())
+    cta = rng.choice(CTAS[tone])
+    first_post = f"{hook}\n\n{cta}"
+    return {
+        "bios": bios,
+        "handles": handles,
+        "first_post": first_post,
+        "hashtags": _tags_from(niche, rng),
+        "avatar_prompt": f"Clean, modern profile avatar for a {t} brand: bold geometric mark, "
+                         f"high-contrast, friendly, works at small sizes, on a solid background.",
+        "platform": platform,
+    }
+
+def ai_thread(topic, tone, count):
+    rng = random.Random()
+    tone = tone if tone in HOOKS else "casual"
+    t = (topic or "your topic").strip().rstrip(".")
+    count = max(3, min(10, int(count or 5)))
+    hook = rng.choice(HOOKS[tone]).format(topic=t.lower())
+    pool = [v.format(topic=t.lower()) for v in VALUE[tone]]
+    rng.shuffle(pool)
+    body = pool[:count - 2]
+    posts = [f"{hook}\n\nHere's the breakdown 🧵"]
+    for i, line in enumerate(body, start=1):
+        posts.append(f"{i}/ {line}")
+    posts.append(rng.choice(CTAS[tone]) + "\n\nFollow for more like this. 🔁 Repost to help a friend.")
+    return {"posts": posts, "count": len(posts), "topic": t}
+
+def ai_carousel(topic, tone):
+    rng = random.Random()
+    tone = tone if tone in HOOKS else "casual"
+    t = (topic or "your topic").strip().rstrip(".")
+    cover = rng.choice(HOOKS[tone]).format(topic=t.lower())
+    pool = [v.format(topic=t.lower()) for v in VALUE[tone]]
+    rng.shuffle(pool)
+    slides = [{"n": 1, "type": "cover", "title": cover, "caption": f"Swipe for the full breakdown on {t.lower()} →"}]
+    titles = SLIDE_TITLES[:]
+    rng.shuffle(titles)
+    for i, cap in enumerate(pool[:5]):
+        slides.append({"n": i + 2, "type": "content", "title": titles[i % len(titles)], "caption": cap})
+    slides.append({"n": len(slides) + 1, "type": "cta",
+                   "title": "That's the playbook", "caption": rng.choice(CTAS[tone])})
+    return {"slides": slides, "topic": t}
+
+def ai_launchkit(niche, tone, platforms):
+    tone = tone if tone in HOOKS else "casual"
+    plats = [p for p in (platforms or ["instagram"]) if p in PLATFORMS] or ["instagram"]
+    profiles = {}
+    for p in plats:
+        profiles[p] = ai_profile(niche, tone, "", p)
+    rng = random.Random()
+    ideas = [v.format(topic=(niche or "your niche").lower()) for v in VALUE[tone]]
+    rng.shuffle(ideas)
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    schedule = []
+    for i, day in enumerate(days):
+        schedule.append({
+            "day": day,
+            "platform": plats[i % len(plats)],
+            "idea": ideas[i % len(ideas)],
+        })
+    checklist = [
+        "Create each account by hand using the suggested handle (adjust if taken).",
+        "Paste the generated bio and upload an avatar (use the avatar prompt with any image tool).",
+        "Publish your first post on each platform within the first 24 hours.",
+        "Follow 10 relevant accounts in your niche and leave genuine comments.",
+        "Stick to the 7-day schedule — consistency beats volume.",
+        "At day 7, review what got the best response and double down on it.",
+    ]
+    return {"profiles": profiles, "schedule": schedule, "checklist": checklist, "niche": niche, "tone": tone}
+
+def charge_credits(conn, user_id, cost):
+    u = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    limit = PLAN_LIMITS.get(u["plan"], 500)
+    if u["ai_credits_used"] + cost > limit:
+        raise HTTPException(402, "Not enough AI credits. Upgrade your plan to keep generating.")
+    conn.execute("UPDATE users SET ai_credits_used = ai_credits_used + ? WHERE id=?", (cost, user_id))
+    return limit, u["ai_credits_used"] + cost
+
+def _voice(u):
+    try:
+        return json.loads(u["prefs"] or "{}").get("brandVoice") or {}
+    except ValueError:
+        return {}
+
+@app.post("/api/ai/profile")
+async def ai_profile_endpoint(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    niche = (body.get("niche") or "").strip()
+    if not niche:
+        raise HTTPException(400, "Tell me your niche or topic")
+    tone = body.get("tone") or "casual"
+    name = body.get("name") or ""
+    platform = body.get("platform") or "instagram"
+    await asyncio.sleep(random.uniform(1.0, 1.8))
+    with closing(db()) as conn:
+        limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
+        result = ai_profile(niche, tone, name, platform)
+        conn.commit()
+    log_activity(user["id"], "ai", f"Profile kit generated for “{niche[:48]}”")
+    return {**result, "credits_used": LAUNCH_COST, "credits_left": limit - used}
+
+@app.post("/api/ai/thread")
+async def ai_thread_endpoint(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    topic = (body.get("topic") or "").strip()
+    if not topic:
+        raise HTTPException(400, "Give the thread a topic")
+    tone = body.get("tone") or "casual"
+    await asyncio.sleep(random.uniform(1.0, 1.8))
+    with closing(db()) as conn:
+        limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
+        result = ai_thread(topic, tone, body.get("count") or 5)
+        conn.commit()
+    log_activity(user["id"], "ai", f"Thread generated for “{topic[:48]}”")
+    return {**result, "credits_used": LAUNCH_COST, "credits_left": limit - used}
+
+@app.post("/api/ai/carousel")
+async def ai_carousel_endpoint(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    topic = (body.get("topic") or "").strip()
+    if not topic:
+        raise HTTPException(400, "Give the carousel a topic")
+    tone = body.get("tone") or "casual"
+    await asyncio.sleep(random.uniform(1.0, 1.8))
+    with closing(db()) as conn:
+        limit, used = charge_credits(conn, user["id"], LAUNCH_COST)
+        result = ai_carousel(topic, tone)
+        conn.commit()
+    log_activity(user["id"], "ai", f"Carousel generated for “{topic[:48]}”")
+    return {**result, "credits_used": LAUNCH_COST, "credits_left": limit - used}
+
+@app.post("/api/ai/launchkit")
+async def ai_launchkit_endpoint(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    niche = (body.get("niche") or "").strip()
+    if not niche:
+        raise HTTPException(400, "Tell me your niche or topic")
+    tone = body.get("tone") or "casual"
+    platforms = body.get("platforms") or ["instagram"]
+    await asyncio.sleep(random.uniform(1.6, 2.4))
+    with closing(db()) as conn:
+        limit, used = charge_credits(conn, user["id"], KIT_COST)
+        result = ai_launchkit(niche, tone, platforms)
+        conn.commit()
+    log_activity(user["id"], "ai", f"Launch kit generated for “{niche[:48]}”")
+    return {**result, "credits_used": KIT_COST, "credits_left": limit - used}
+
 # ---- quick replies
 
 @app.get("/api/quick-replies")

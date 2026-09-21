@@ -68,6 +68,21 @@ approval from teammates), 4 campaigns, 9 inbox messages, 4 teammates, 6 media as
 5 invoices, 3 competitors, 3 tracked keywords, 3 weekly reports and 180 days of analytics.
 New registrations start empty to demonstrate every empty state.
 
+## Launch & Monetize toolkit (v2)
+Everything you need to start earning from your own real accounts — Lumina prepares it all,
+you stay in control of actually posting (no official APIs, no bots, nothing that touches
+your accounts on your behalf):
+
+| Screen | What it does |
+|---|---|
+| **Profile Studio** | Generates 3 bios, 5 handle ideas, a first post, hashtags and an avatar prompt for your niche. |
+| **Thread & Carousel** | Writes a full multi-post thread or a slide-by-slide carousel outline from one topic. |
+| **Launch Kit** | A complete first-week plan: per-platform profiles, a 7-day posting schedule and a launch checklist. |
+| **Publish Assistant** | The "Publish" button opens a copy-and-paste workflow per platform — you post it yourself, then mark it done. |
+
+These are creative tools that write content for you to review and use. They never
+auto-create accounts, auto-post, or bypass any platform's rules.
+
 ---
 
 ## The product — 20 screens
