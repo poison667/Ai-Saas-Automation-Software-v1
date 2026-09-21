@@ -1,8 +1,7 @@
 name: Build Lumina desktop app
 
 on:
-  push:
-    branches: [main]
+  # Paused: rebuilds only happen when triggered manually ("Run workflow") or when asked.
   workflow_dispatch:
 
 permissions:

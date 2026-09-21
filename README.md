@@ -68,6 +68,16 @@ approval from teammates), 4 campaigns, 9 inbox messages, 4 teammates, 6 media as
 5 invoices, 3 competitors, 3 tracked keywords, 3 weekly reports and 180 days of analytics.
 New registrations start empty to demonstrate every empty state.
 
+## Revenue & Money layer (v2.1)
+
+Turn a following into income without touching any official social APIs.
+
+- **Deals pipeline** — log every sponsorship, affiliate check, product or service deal. Track each one through `lead → negotiating → won / lost`, with inline status changes, edit and delete.
+- **Money dashboard** — won this month, pipeline value, win rate, average deal size, plus a hand-rolled SVG bar chart of won revenue over the last 6 months. A compact revenue widget also appears on the main dashboard.
+- **Automatic Rate Card** — pricing is computed from your connected accounts' follower counts and 30-day engagement (a 3% engagement rate is the ×1.0 benchmark; strong engagement raises your prices, weak engagement lowers them). Copy the whole card as plain text to send to brands.
+
+No bots, no auto-posting, no official-API access: Lumina prepares the numbers and the words, you close the deal and publish manually.
+
 ## Launch & Monetize toolkit (v2)
 Everything you need to start earning from your own real accounts — Lumina prepares it all,
 you stay in control of actually posting (no official APIs, no bots, nothing that touches

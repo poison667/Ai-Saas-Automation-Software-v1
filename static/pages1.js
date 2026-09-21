@@ -156,6 +156,7 @@ ROUTES.dashboard = {
         </div>
         <div class="stack">
           <div class="card"><h3>Upcoming posts</h3><div class="card-sub">Next out the door</div><div id="dash-upcoming">${skeletonTable(3)}</div></div>
+          <div class="card"><h3 style="display:flex;align-items:center;gap:8px">${icon("dollar", 15)} Revenue this month <span style="flex:1"></span><button class="btn ghost sm" onclick="location.hash='#/revenue'">Open →</button></h3><div class="card-sub">Deals won, month to date</div><div id="dash-revenue"><div class="skel skel-block" style="height:60px"></div></div></div>
           <div class="card"><h3 style="display:flex;align-items:center;gap:8px">Monthly goals <span style="flex:1"></span><button class="btn sm" id="goals-edit">${icon("edit", 12)} Set goals</button></h3><div class="card-sub">Month to date vs your targets</div><div id="dash-goals"><div class="skel skel-block" style="height:90px"></div></div></div>
           <div class="card"><h3>Posting rhythm</h3><div class="card-sub">Published days — last 12 weeks</div><div id="dash-heat"><div class="skel skel-block" style="height:90px"></div></div></div>
           <div class="card"><h3>Top performers</h3><div class="card-sub">Published posts, ranked</div><div id="dash-top">${skeletonTable(3)}</div></div>
@@ -227,6 +228,21 @@ ROUTES.dashboard = {
 
     // posting heatmap
     api("/api/heatmap").then(h => renderHeatmap(h)).catch(() => {});
+
+    // revenue widget
+    api("/api/deals/summary").then(s => {
+      const el = document.getElementById("dash-revenue");
+      if (!el) return;
+      el.innerHTML = `
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <b style="font-size:26px;color:#34d399">$${Math.round(s.won_month).toLocaleString()}</b>
+          <span class="faint" style="font-size:12px">won</span>
+          <span style="flex:1"></span>
+          <span class="badge purple" title="Open deals">$${Math.round(s.pipeline).toLocaleString()} pipeline</span>
+        </div>
+        <div class="progress" style="margin-top:9px"><div class="bar" style="width:${Math.min(100, s.pipeline > 0 ? 55 + s.win_rate / 2.5 : 8)}%;background:linear-gradient(135deg,#34d399,#22d3ee)"></div></div>
+        <div class="faint" style="font-size:11px;margin-top:6px">${s.win_rate}% win rate · avg deal $${Math.round(s.avg_deal).toLocaleString()}</div>`;
+    }).catch(() => {});
 
     page.querySelectorAll("[data-open-post]").forEach(el => {
       el.onclick = () => location.hash = "#/posts";

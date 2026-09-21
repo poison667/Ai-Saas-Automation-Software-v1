@@ -227,6 +227,18 @@ CREATE TABLE IF NOT EXISTS integrations (
   connected_at TEXT NOT NULL,
   last_sync TEXT
 );
+CREATE TABLE IF NOT EXISTS deals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  brand TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'sponsorship',
+  platform TEXT NOT NULL DEFAULT 'instagram',
+  amount REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'lead',
+  notes TEXT NOT NULL DEFAULT '',
+  deal_date TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS quick_replies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
@@ -850,6 +862,25 @@ def seed_demo(conn):
         conn.execute("INSERT INTO reports (user_id, title, period_start, period_end, stats, created_at) VALUES (?,?,?,?,?,?)",
                      (uid, title, start.isoformat(), end.isoformat(), json.dumps(stats),
                       now_iso(-(k - 1) * 86400 - 3600 * 6)))
+
+    # ---- deals & revenue ----
+    deal_seed = [
+        ("Brewline Coffee", "sponsorship", "instagram", 450, "won", "2 posts + 3 stories, product shipped by them", -52),
+        ("FitKit Apparel", "sponsorship", "tiktok", 600, "won", "One video, 30-day usage rights", -41),
+        ("GlowDesk", "affiliate", "instagram", 130, "won", "Code LUMINA10 — 12 conversions so far", -33),
+        ("Nordbeam Audio", "sponsorship", "youtube", 950, "won", "60s integrated spot", -24),
+        ("Pixel Pantry", "product", "instagram", 210, "won", "Template pack launch week", -16),
+        ("Stackwise", "sponsorship", "linkedin", 700, "won", "2 carousel posts, B2B angle", -6),
+        ("Wanderfuel", "sponsorship", "instagram", 800, "negotiating", "Asked for 3 posts + story series; counter sent", -2),
+        ("Craftfolio", "affiliate", "x", 90, "won", "Recurring monthly commission", -1),
+        ("Loom & Latte", "sponsorship", "tiktok", 350, "lead", "Inbound DM — needs media kit", 0),
+        ("HypeJuice", "sponsorship", "instagram", 500, "lost", "Went with a bigger creator; keep warm for Q4", -12),
+    ]
+    deal_rng = random.Random(7)
+    for brand, typ, plat, amt, status, notes, off in deal_seed:
+        conn.execute("INSERT INTO deals (user_id, brand, type, platform, amount, status, notes, deal_date, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (uid, brand, typ, plat, amt, status, notes, day_iso(off), day_iso(off)))
+    _ = deal_rng
 
     # ---- quick replies ----
     for title, body in (
@@ -1846,6 +1877,126 @@ async def ai_launchkit_endpoint(request: Request, user=Depends(require_user)):
     log_activity(user["id"], "ai", f"Launch kit generated for “{niche[:48]}”")
     return {**result, "credits_used": KIT_COST, "credits_left": limit - used}
 
+# ---- revenue & deals
+
+DEAL_TYPES = ("sponsorship", "affiliate", "product", "service", "other")
+DEAL_STATUSES = ("lead", "negotiating", "won", "lost")
+
+@app.get("/api/deals")
+async def list_deals(user=Depends(require_user)):
+    await jitter(0.1, 0.3)
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM deals WHERE user_id=? ORDER BY date(deal_date) DESC, id DESC", (user["id"],)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/deals")
+async def create_deal(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    brand = (body.get("brand") or "").strip()
+    if not brand:
+        raise HTTPException(400, "Give the deal a brand or source")
+    try:
+        amount = max(0.0, float(body.get("amount") or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Amount must be a number")
+    typ = body.get("type") if body.get("type") in DEAL_TYPES else "sponsorship"
+    status = body.get("status") if body.get("status") in DEAL_STATUSES else "lead"
+    platform = body.get("platform") if body.get("platform") in PLATFORMS else "instagram"
+    deal_date = str(body.get("deal_date") or day_iso(0))[:10]
+    with closing(db()) as conn:
+        cur = conn.execute("INSERT INTO deals (user_id, brand, type, platform, amount, status, notes, deal_date, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                           (user["id"], brand, typ, platform, amount, status, (body.get("notes") or "").strip(), deal_date, now_iso()))
+        conn.commit()
+        row = conn.execute("SELECT * FROM deals WHERE id=?", (cur.lastrowid,)).fetchone()
+    log_activity(user["id"], "milestone", f"Deal added: {brand} (${amount:,.0f}, {status})")
+    return dict(row)
+
+@app.patch("/api/deals/{id}")
+async def update_deal(id: int, request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    with closing(db()) as conn:
+        row = own(conn, "deals", id, user["id"])
+        d = dict(row)
+        for k in ("brand", "notes"):
+            if k in body and isinstance(body[k], str):
+                d[k] = body[k].strip()
+        if body.get("type") in DEAL_TYPES: d["type"] = body["type"]
+        if body.get("status") in DEAL_STATUSES: d["status"] = body["status"]
+        if body.get("platform") in PLATFORMS: d["platform"] = body["platform"]
+        if body.get("amount") is not None:
+            try:
+                d["amount"] = max(0.0, float(body["amount"]))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Amount must be a number")
+        if body.get("deal_date"): d["deal_date"] = str(body["deal_date"])[:10]
+        conn.execute("UPDATE deals SET brand=?, type=?, platform=?, amount=?, status=?, notes=?, deal_date=? WHERE id=?",
+                     (d["brand"], d["type"], d["platform"], d["amount"], d["status"], d["notes"], d["deal_date"], id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM deals WHERE id=?", (id,)).fetchone()
+    if body.get("status") == "won":
+        log_activity(user["id"], "milestone", f"Deal won: {row['brand']} — ${row['amount']:,.0f} 🎉")
+    return dict(row)
+
+@app.delete("/api/deals/{id}")
+async def delete_deal(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "deals", id, user["id"])
+        conn.execute("DELETE FROM deals WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.get("/api/deals/summary")
+async def deals_summary(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM deals WHERE user_id=?", (user["id"],)).fetchall()
+    deals = [dict(r) for r in rows]
+    today = dt.date.today()
+    month_start = today.replace(day=1).strftime("%Y-%m-%d")
+    won_month = sum(d["amount"] for d in deals if d["status"] == "won" and d["deal_date"] >= month_start)
+    won_year = sum(d["amount"] for d in deals if d["status"] == "won" and d["deal_date"][:4] == str(today.year))
+    pipeline = sum(d["amount"] for d in deals if d["status"] in ("lead", "negotiating"))
+    closed = [d for d in deals if d["status"] in ("won", "lost")]
+    win_rate = round(100 * sum(1 for d in closed if d["status"] == "won") / len(closed)) if closed else 0
+    won_amounts = [d["amount"] for d in deals if d["status"] == "won"]
+    avg_deal = round(sum(won_amounts) / len(won_amounts)) if won_amounts else 0
+    months = []
+    for i in range(5, -1, -1):
+        m_idx = today.month - i - 1
+        y, m = today.year + m_idx // 12, m_idx % 12 + 1
+        key = f"{y}-{m:02d}"
+        months.append({"label": dt.date(y, m, 1).strftime("%b"),
+                       "value": sum(d["amount"] for d in deals if d["status"] == "won" and d["deal_date"][:7] == key)})
+    return {"won_month": won_month, "won_year": won_year, "pipeline": pipeline, "win_rate": win_rate,
+            "avg_deal": avg_deal, "open": sum(1 for d in deals if d["status"] in ("lead", "negotiating")),
+            "months": months}
+
+@app.get("/api/rate-card")
+async def rate_card(user=Depends(require_user)):
+    with closing(db()) as conn:
+        accounts = [dict(r) for r in conn.execute(
+            "SELECT * FROM accounts WHERE user_id=? AND status='connected'", (user["id"],))]
+        series = [dict(r) for r in conn.execute(
+            "SELECT engagement FROM analytics WHERE user_id=? AND date>=? ORDER BY date", (user["id"], day_iso(-29)))]
+        u = conn.execute("SELECT workspace FROM users WHERE id=?", (user["id"],)).fetchone()
+    followers = sum(a["followers"] for a in accounts)
+    eng = round(sum(r["engagement"] for r in series) / len(series), 2) if series else 0.0
+    eng_mult = round(max(0.6, min(2.2, eng / 3.0)), 2)  # 3% engagement is the pricing benchmark
+    per_platform = []
+    for a in sorted(accounts, key=lambda x: -x["followers"]):
+        base = a["followers"] / 10000 * 100  # $100 per 10k followers baseline
+        per_platform.append({
+            "platform": a["platform"], "handle": a["handle"], "followers": a["followers"],
+            "prices": {
+                "post": max(25, int(round(base * 1.0 * eng_mult / 5) * 5)),
+                "story": max(15, int(round(base * 0.4 * eng_mult / 5) * 5)),
+                "video": max(50, int(round(base * 2.2 * eng_mult / 5) * 5)),
+                "bundle": max(75, int(round(base * 3.2 * eng_mult / 5) * 5)),
+            }})
+    return {"workspace": u["workspace"], "followers": followers, "engagement": eng,
+            "engagement_multiplier": eng_mult, "platforms": per_platform,
+            "notes": ["Rates include 30-day content usage rights.",
+                      "Add 25% for exclusivity, whitelisting or extra revisions."]}
+
 # ---- quick replies
 
 @app.get("/api/quick-replies")
@@ -2392,7 +2543,7 @@ async def reset_workspace(request: Request, user=Depends(require_user)):
     uid = user["id"]
     tables = ["accounts", "posts", "campaigns", "analytics", "templates", "generations", "activity",
               "conversations", "team_members", "media", "invoices", "competitors", "reports", "keywords",
-              "post_versions", "integrations", "ab_tests", "webhook_events", "quick_replies"]
+              "post_versions", "integrations", "ab_tests", "webhook_events", "quick_replies", "deals"]
     with closing(db()) as conn:
         for t in tables:
             conn.execute(f"DELETE FROM {t} WHERE user_id=?", (uid,))

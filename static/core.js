@@ -122,6 +122,9 @@ const ICON_PATHS = {
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   rocket: '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
   user: '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  dollar: '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>',
+  briefcase: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>',
+  award: '<circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>',
 };
 function icon(name, size = 18, cls = "") {
   const p = ICON_PATHS[name] || "";
@@ -373,6 +376,7 @@ const NAV = [
   { id: "inbox", label: "Inbox", icon: "comment", badge: "inbox" },
   { id: "notifications", label: "Notifications", icon: "bell" },
   { id: "reports", label: "Reports", icon: "file" },
+  { id: "revenue", label: "Revenue", icon: "dollar" },
   { section: "Create" },
   { id: "generator", label: "AI Generator", icon: "sparkles" },
   { id: "ideas", label: "Content Ideas", icon: "zap" },
