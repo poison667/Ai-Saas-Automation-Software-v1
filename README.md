@@ -68,6 +68,16 @@ approval from teammates), 4 campaigns, 9 inbox messages, 4 teammates, 6 media as
 5 invoices, 3 competitors, 3 tracked keywords, 3 weekly reports and 180 days of analytics.
 New registrations start empty to demonstrate every empty state.
 
+## Real Business Core (v3.1)
+
+Real, empty-by-default working tools — no demo filler in these:
+
+- **Client CRM** — real client book: contacts, email/phone, platform, niche, status pipeline (lead → active → paused → closed), notes.
+- **Rate Calculator** — real industry pricing math (estimated views × platform CPM × engagement adjustment) that outputs floor/fair/ceiling quotes for 7 deliverable types.
+- **Metrics Tracker** — log your REAL numbers (followers/views/revenue per platform, per date); Lumina draws growth deltas and sparklines from your data only.
+- **Post Performance log** — enter real post stats; automatic engagement-rate math, averages, and best-performer detection.
+- **Follow-ups & Tasks** — auto-generated money follow-ups (overdue/due-soon invoices pulled live from Invoices) plus a real task board with client links and overdue warnings.
+
 ## Real AI Engine (v3.0)
 
 The whole product now runs on a **real, pluggable AI engine** — not canned text.

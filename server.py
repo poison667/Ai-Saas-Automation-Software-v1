@@ -254,6 +254,51 @@ CREATE TABLE IF NOT EXISTS client_invoices (
   notes TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS clients (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  contact TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  platform TEXT NOT NULL DEFAULT 'instagram',
+  niche TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'lead',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  entry_date TEXT NOT NULL,
+  followers INTEGER NOT NULL DEFAULT 0,
+  views INTEGER NOT NULL DEFAULT 0,
+  revenue REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS post_stats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  platform TEXT NOT NULL DEFAULT 'tiktok',
+  caption TEXT NOT NULL DEFAULT '',
+  posted_at TEXT NOT NULL,
+  views INTEGER NOT NULL DEFAULT 0,
+  likes INTEGER NOT NULL DEFAULT 0,
+  comments INTEGER NOT NULL DEFAULT 0,
+  saves INTEGER NOT NULL DEFAULT 0,
+  shares INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  due TEXT NOT NULL,
+  client TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS quick_replies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
@@ -2382,6 +2427,293 @@ async def client_invoices_summary(user=Depends(require_user)):
             "paid_month": sum(i["total"] for i in paid if i["issue_date"] >= month_start),
             "paid_year": sum(i["total"] for i in paid if i["issue_date"][:4] == str(dt.date.today().year)),
             "overdue": len(overdue), "count": len(invs)}
+
+# ---- Real business core (v3.1): clients, metrics, post stats, tasks, rates
+
+CLIENT_STATUSES = ("lead", "active", "paused", "closed")
+
+@app.get("/api/clients")
+async def list_clients(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM clients WHERE user_id=? ORDER BY created_at DESC", (user["id"],)).fetchall()
+    return {"items": [dict(r) for r in rows]}
+
+@app.post("/api/clients")
+async def create_client(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    name = (body.get("name") or "").strip()
+    if len(name) < 2:
+        raise HTTPException(400, "Client needs a name (2+ characters)")
+    status = body.get("status") if body.get("status") in CLIENT_STATUSES else "lead"
+    with closing(db()) as conn:
+        cur = conn.execute(
+            "INSERT INTO clients (user_id, name, contact, email, phone, platform, niche, status, notes, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (user["id"], name[:80], (body.get("contact") or "").strip()[:80], (body.get("email") or "").strip()[:120],
+             (body.get("phone") or "").strip()[:40], body.get("platform") or "instagram",
+             (body.get("niche") or "").strip()[:60], status, (body.get("notes") or "").strip()[:2000], now_iso()))
+        conn.commit()
+        row = conn.execute("SELECT * FROM clients WHERE id=?", (cur.lastrowid,)).fetchone()
+    log_activity(user["id"], "client", f"Client added: “{name[:48]}”")
+    return dict(row)
+
+@app.patch("/api/clients/{id}")
+async def update_client(id: int, request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    with closing(db()) as conn:
+        row = own(conn, "clients", id, user["id"])
+        d = dict(row)
+        for k in ("name", "contact", "email", "phone", "platform", "niche", "status", "notes"):
+            if k in body and body[k] is not None:
+                d[k] = str(body[k]).strip()[:2000]
+        if d["status"] not in CLIENT_STATUSES:
+            raise HTTPException(400, "Invalid status")
+        if len(d["name"]) < 2:
+            raise HTTPException(400, "Client needs a name")
+        conn.execute("UPDATE clients SET name=?, contact=?, email=?, phone=?, platform=?, niche=?, status=?, notes=? WHERE id=?",
+                     (d["name"], d["contact"], d["email"], d["phone"], d["platform"], d["niche"], d["status"], d["notes"], id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM clients WHERE id=?", (id,)).fetchone()
+    return dict(row)
+
+@app.delete("/api/clients/{id}")
+async def delete_client(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "clients", id, user["id"])
+        conn.execute("DELETE FROM clients WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.get("/api/clients/summary")
+async def clients_summary(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT status, COUNT(*) c FROM clients WHERE user_id=? GROUP BY status", (user["id"],)).fetchall()
+    counts = {s: 0 for s in CLIENT_STATUSES}
+    for r in rows:
+        counts[r["status"]] = r["c"]
+    return {"counts": counts, "total": sum(counts.values())}
+
+# ---- metrics tracker (real numbers, entered by the user)
+
+@app.get("/api/metrics")
+async def list_metrics(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM metrics WHERE user_id=? ORDER BY entry_date DESC, id DESC LIMIT 600", (user["id"],)).fetchall()
+    return {"items": [dict(r) for r in rows]}
+
+@app.post("/api/metrics")
+async def add_metric(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    platform = (body.get("platform") or "").strip().lower()
+    if not platform:
+        raise HTTPException(400, "Pick a platform")
+    entry_date = (body.get("entry_date") or "").strip() or now_iso()[:10]
+    try:
+        followers = max(0, int(body.get("followers") or 0))
+        views = max(0, int(body.get("views") or 0))
+        revenue = max(0.0, float(body.get("revenue") or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Numbers must be numbers")
+    if followers == 0 and views == 0 and revenue == 0:
+        raise HTTPException(400, "Enter at least one number")
+    with closing(db()) as conn:
+        cur = conn.execute("INSERT INTO metrics (user_id, platform, entry_date, followers, views, revenue, created_at) VALUES (?,?,?,?,?,?,?)",
+                           (user["id"], platform[:30], entry_date[:10], followers, views, revenue, now_iso()))
+        conn.commit()
+        row = conn.execute("SELECT * FROM metrics WHERE id=?", (cur.lastrowid,)).fetchone()
+    log_activity(user["id"], "metrics", f"Logged {platform} numbers for {entry_date}")
+    return dict(row)
+
+@app.delete("/api/metrics/{id}")
+async def delete_metric(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "metrics", id, user["id"])
+        conn.execute("DELETE FROM metrics WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.get("/api/metrics/summary")
+async def metrics_summary(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM metrics WHERE user_id=? ORDER BY entry_date ASC, id ASC", (user["id"],)).fetchall()
+    by_plat = {}
+    for r in rows:
+        by_plat.setdefault(r["platform"], []).append(dict(r))
+    out = []
+    for plat, entries in by_plat.items():
+        latest = entries[-1]
+        prev = entries[-2] if len(entries) > 1 else None
+        out.append({
+            "platform": plat,
+            "latest": latest,
+            "follower_delta": (latest["followers"] - prev["followers"]) if prev else None,
+            "views_delta": (latest["views"] - prev["views"]) if prev else None,
+            "entries": len(entries),
+        })
+    total_revenue = sum(r["revenue"] for r in rows)
+    return {"platforms": out, "total_revenue_logged": total_revenue, "entries": len(rows)}
+
+# ---- post performance log (real stats from real posts)
+
+@app.get("/api/post-stats")
+async def list_post_stats(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM post_stats WHERE user_id=? ORDER BY posted_at DESC, id DESC LIMIT 300", (user["id"],)).fetchall()
+    return {"items": [dict(r) for r in rows]}
+
+@app.post("/api/post-stats")
+async def add_post_stat(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    caption = (body.get("caption") or "").strip()
+    if not caption:
+        raise HTTPException(400, "Give the post a name or paste its caption")
+    try:
+        nums = {k: max(0, int(body.get(k) or 0)) for k in ("views", "likes", "comments", "saves", "shares")}
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Numbers must be numbers")
+    if nums["views"] == 0:
+        raise HTTPException(400, "Views are needed to calculate performance")
+    with closing(db()) as conn:
+        cur = conn.execute(
+            "INSERT INTO post_stats (user_id, platform, caption, posted_at, views, likes, comments, saves, shares, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (user["id"], body.get("platform") or "tiktok", caption[:200],
+             (body.get("posted_at") or now_iso()[:10])[:10], nums["views"], nums["likes"],
+             nums["comments"], nums["saves"], nums["shares"], now_iso()))
+        conn.commit()
+        row = conn.execute("SELECT * FROM post_stats WHERE id=?", (cur.lastrowid,)).fetchone()
+    d = dict(row)
+    d["engagement_rate"] = round((d["likes"] + d["comments"] + d["saves"] + d["shares"]) / max(1, d["views"]) * 100, 2)
+    log_activity(user["id"], "metrics", f"Post stats logged: “{caption[:40]}”")
+    return d
+
+@app.delete("/api/post-stats/{id}")
+async def delete_post_stat(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "post_stats", id, user["id"])
+        conn.execute("DELETE FROM post_stats WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.get("/api/post-stats/summary")
+async def post_stats_summary(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM post_stats WHERE user_id=? ORDER BY posted_at DESC LIMIT 300", (user["id"],)).fetchall()
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["engagement_rate"] = round((d["likes"] + d["comments"] + d["saves"] + d["shares"]) / max(1, d["views"]) * 100, 2)
+        items.append(d)
+    best = sorted(items, key=lambda x: x["engagement_rate"], reverse=True)[:3]
+    avg_er = round(sum(i["engagement_rate"] for i in items) / len(items), 2) if items else 0
+    total_views = sum(i["views"] for i in items)
+    return {"count": len(items), "avg_engagement": avg_er, "total_views": total_views, "best": best}
+
+# ---- tasks & follow-ups
+
+@app.get("/api/tasks")
+async def list_tasks(user=Depends(require_user)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM tasks WHERE user_id=? ORDER BY due ASC, id DESC LIMIT 300", (user["id"],)).fetchall()
+    return {"items": [dict(r) for r in rows]}
+
+@app.post("/api/tasks")
+async def create_task(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    title = (body.get("title") or "").strip()
+    if len(title) < 2:
+        raise HTTPException(400, "Task needs a title")
+    due = (body.get("due") or "").strip() or now_iso()[:10]
+    with closing(db()) as conn:
+        cur = conn.execute("INSERT INTO tasks (user_id, title, due, client, status, created_at) VALUES (?,?,?,?,?,?)",
+                           (user["id"], title[:160], due[:10], (body.get("client") or "").strip()[:80], "open", now_iso()))
+        conn.commit()
+        row = conn.execute("SELECT * FROM tasks WHERE id=?", (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+@app.patch("/api/tasks/{id}")
+async def update_task(id: int, request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    with closing(db()) as conn:
+        row = own(conn, "tasks", id, user["id"])
+        d = dict(row)
+        for k in ("title", "due", "client", "status"):
+            if k in body and body[k] is not None:
+                d[k] = str(body[k]).strip()[:200]
+        if d["status"] not in ("open", "done"):
+            raise HTTPException(400, "Invalid status")
+        conn.execute("UPDATE tasks SET title=?, due=?, client=?, status=? WHERE id=?",
+                     (d["title"], d["due"], d["client"], d["status"], id))
+        conn.commit()
+        row = conn.execute("SELECT * FROM tasks WHERE id=?", (id,)).fetchone()
+    return dict(row)
+
+@app.delete("/api/tasks/{id}")
+async def delete_task(id: int, user=Depends(require_user)):
+    with closing(db()) as conn:
+        own(conn, "tasks", id, user["id"])
+        conn.execute("DELETE FROM tasks WHERE id=?", (id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.get("/api/tasks/summary")
+async def tasks_summary(user=Depends(require_user)):
+    today = now_iso()[:10]
+    soon = (dt.date.today() + dt.timedelta(days=7)).isoformat()
+    with closing(db()) as conn:
+        open_tasks = conn.execute("SELECT COUNT(*) c FROM tasks WHERE user_id=? AND status='open'", (user["id"],)).fetchone()["c"]
+        overdue_tasks = conn.execute("SELECT COUNT(*) c FROM tasks WHERE user_id=? AND status='open' AND due < ?", (user["id"], today)).fetchone()["c"]
+        due_soon = conn.execute("SELECT COUNT(*) c FROM tasks WHERE user_id=? AND status='open' AND due >= ? AND due <= ?", (user["id"], today, soon)).fetchone()["c"]
+        invoices = conn.execute("SELECT number, client, due_date, status FROM client_invoices WHERE user_id=? AND status IN ('sent','overdue')", (user["id"],)).fetchall()
+    follow_ups = []
+    for inv in invoices:
+        if inv["due_date"] < today:
+            follow_ups.append({"type": "invoice-overdue", "text": f"Invoice {inv['number']} for {inv['client']} is OVERDUE (due {inv['due_date']}) — send a payment reminder today."})
+        elif inv["due_date"] <= soon:
+            follow_ups.append({"type": "invoice-due", "text": f"Invoice {inv['number']} for {inv['client']} is due {inv['due_date']} — confirm it was received."})
+    return {"open": open_tasks, "overdue": overdue_tasks, "due_soon": due_soon, "follow_ups": follow_ups}
+
+# ---- rate calculator (real industry pricing math)
+
+RATE_REACH = {"tiktok": 0.5, "instagram": 0.3, "youtube": 1.0, "facebook": 0.2, "x": 0.25, "threads": 0.2, "linkedin": 0.15}
+RATE_CPM = {"tiktok": (8, 12), "instagram": (10, 15), "youtube": (18, 30), "facebook": (5, 8), "x": (4, 7), "threads": (4, 7), "linkedin": (12, 20)}
+RATE_DELIVERABLES = {
+    "post": {"label": "Single post", "mult": 1.0},
+    "video": {"label": "Short video / Reel / TikTok", "mult": 1.2},
+    "story": {"label": "Story set (3-5 frames)", "mult": 0.35},
+    "carousel": {"label": "Carousel", "mult": 1.1},
+    "live": {"label": "LIVE appearance", "mult": 1.5},
+    "bundle": {"label": "Bundle (post + video + stories)", "mult": 2.4},
+    "ambassador": {"label": "Monthly ambassador (4 posts)", "mult": 3.5},
+}
+
+@app.post("/api/rates/calculate")
+async def calc_rate(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    platform = (body.get("platform") or "tiktok").lower()
+    if platform not in RATE_CPM:
+        raise HTTPException(400, "Unsupported platform")
+    try:
+        followers = max(0, int(body.get("followers") or 0))
+        engagement = max(0.0, min(30.0, float(body.get("engagement") or 3.0)))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Check your numbers")
+    if followers < 100:
+        raise HTTPException(400, "Enter at least 100 followers to price a deal")
+    deliverable = body.get("deliverable") if body.get("deliverable") in RATE_DELIVERABLES else "post"
+    reach = RATE_REACH[platform]
+    cpm_lo, cpm_hi = RATE_CPM[platform]
+    est_views = int(followers * reach * RATE_DELIVERABLES[deliverable]["mult"])
+    eng_mult = max(0.6, min(2.0, engagement / 3.0))  # 3% engagement is the industry baseline
+    low = max(50, round(est_views / 1000 * cpm_lo * eng_mult))
+    high = max(low + 25, round(est_views / 1000 * cpm_hi * eng_mult))
+    mid = round((low + high) / 2)
+    return {
+        "platform": platform, "deliverable": deliverable,
+        "deliverable_label": RATE_DELIVERABLES[deliverable]["label"],
+        "estimated_views": est_views,
+        "low": low, "mid": mid, "high": high,
+        "basis": f"~{est_views:,} estimated views priced at ${cpm_lo}–${cpm_hi} CPM, adjusted {eng_mult:.2f}x for {engagement}% engagement",
+        "anchor_line": f"Never open below ${low}. A fair deal is ${mid}. Walk-away ceiling is ${high}.",
+    }
 
 # ---- brand outreach AI
 
