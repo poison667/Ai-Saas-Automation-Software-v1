@@ -77,6 +77,8 @@ Turn a following into income without touching any official social APIs.
 - **Automatic Rate Card** — pricing is computed from your connected accounts' follower counts and 30-day engagement (a 3% engagement rate is the ×1.0 benchmark; strong engagement raises your prices, weak engagement lowers them). Copy the whole card as plain text to send to brands.
 
 - **Media Kit studio** — a one-page brand pitch assembled live from your data: total followers, engagement, 30-day reach, audience growth, per-platform breakdown, your rate card and brands you've worked with. Copy it as text or download a styled HTML version to attach to pitches.
+- **Pitch writer** — one click drafts a complete outreach email to a brand (four angles: cold intro, audience-fit, past results, seasonal), personalized with your real numbers.
+- **Negotiation coach** — five scenarios (lowball offer, extra usage rights, exposure-only deals, scope creep, payment terms) each return a playbook plus a ready-to-send reply.
 
 No bots, no auto-posting, no official-API access: Lumina prepares the numbers and the words, you close the deal and publish manually.
 

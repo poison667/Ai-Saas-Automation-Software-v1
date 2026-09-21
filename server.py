@@ -1615,6 +1615,8 @@ async def rewrite(request: Request, user=Depends(require_user)):
 
 LAUNCH_COST = 10
 KIT_COST = 15
+PITCH_COST = 5
+NEGOTIATE_COST = 5
 
 HANDLE_SUFFIX = ["hq", "studio", "official", "daily", "lab", "hub", "co", "club", "zone", "works"]
 
@@ -1876,6 +1878,138 @@ async def ai_launchkit_endpoint(request: Request, user=Depends(require_user)):
         conn.commit()
     log_activity(user["id"], "ai", f"Launch kit generated for “{niche[:48]}”")
     return {**result, "credits_used": KIT_COST, "credits_left": limit - used}
+
+# ---- brand outreach AI
+
+PITCH_ANGLES = {
+    "intro": ("Cold outreach that introduces you and your audience",
+              "I came across {brand} and genuinely loved what you're building."),
+    "fit": ("Positioning your audience as a perfect match for the brand",
+            "What {brand} stands for speaks directly to the people who follow me every day."),
+    "results": ("Leading with past results and social proof",
+                "In my last campaign for a brand in your space we drove strong engagement — I'd love to do the same for {brand}."),
+    "seasonal": ("Tying the pitch to a season, launch or moment",
+                  "With the busy season coming up, I think {brand} has a natural story to tell to my audience."),
+}
+
+PITCH_OPENERS = [
+    "Quick one for you:", "Hope this finds you well — short pitch incoming:",
+    "I'll keep this brief:", "Reaching out because this is a genuine fit:",
+]
+PITCH_CLOSERS = [
+    "If it's useful, I can send my full media kit and a couple of content ideas tailored to {brand}. Either way, keep up the great work.",
+    "Happy to share my media kit, audience numbers and a rough concept deck — just say the word.",
+    "Would a quick chat or a one-page concept be helpful? I can have ideas over to you this week.",
+]
+
+def ai_pitch(brand, contact, angle_key, mk):
+    rng = random.Random(hash((brand, contact, angle_key, mk["workspace"])) & 0xFFFFFFFF)
+    angle_label, angle_line = PITCH_ANGLES.get(angle_key, PITCH_ANGLES["intro"])
+    top = mk["platforms"][0] if mk["platforms"] else None
+    top_txt = f"{PLATFORMS[top['platform']]['name']} ({top['handle']}), where I reach {top['followers']:,} people" if top else "my channels"
+    subject_bits = [
+        f"{mk['workspace']} x {brand} — partnership idea",
+        f"Collaboration pitch: {brand} + {mk['workspace']}",
+        f"{mk['followers']:,} engaged eyes for {brand}",
+    ]
+    subject = rng.choice(subject_bits)
+    opener = rng.choice(PITCH_OPENERS).format(brand=brand)
+    closer = rng.choice(PITCH_CLOSERS).format(brand=brand)
+    hi = f"Hi {contact}," if contact else f"Hi {brand} team,"
+    body = "\n\n".join([
+        hi,
+        angle_line.format(brand=brand),
+        f"I run {mk['workspace']}, currently reaching {mk['followers']:,} followers across {len(mk['platforms']) or 'my'} platform"
+        f"{'s' if len(mk['platforms']) != 1 else ''} — strongest on {top_txt}. Average engagement sits at {mk['engagement']}%, "
+        f"and my audience grew {mk['growth']:+.1f}% over the last month.",
+        f"I'd love to propose a collaboration that feels native to my content: a dedicated feature for {brand}, "
+        "shaped around what my audience actually responds to. I handle concept, production and posting — you get usage rights and honest promotion.",
+        closer,
+        f"{mk['name']}\n{mk['workspace']}",
+    ])
+    return {"subject": subject, "body": body, "angle": angle_label, "opener": opener}
+
+NEGOTIATE_SCENARIOS = {
+    "lowball": "The brand offered below your rate card",
+    "rights": "They want usage rights / whitelisting beyond the standard",
+    "exposure": "They're offering free product or 'exposure' instead of money",
+    "scope": "Deliverables keep growing without the budget changing",
+    "payment": "Payment terms, deposit or late payment",
+}
+NEGOTIATE_PLAYBOOK = {
+    "lowball": [
+        "Anchor back to your rate card: share the relevant line and say your rate reflects your engagement rate, not just follower count.",
+        "Offer a trimmed scope at their number instead of a discount — fewer deliverables, same per-item price.",
+        "If the budget truly can't move, ask for non-cash value: longer usage rights for you, a guaranteed repeat booking, or a performance bonus.",
+        "Be ready to walk away politely; a 'not this time' keeps the door open for next quarter's budget.",
+    ],
+    "rights": [
+        "Price usage rights separately: 30-day organic usage is included, anything beyond is an add-on (typically +25–50%).",
+        "Whitelisting or paid amplification of your content is a different product — quote it as such, usually a monthly fee.",
+        "Put an expiry date on every right you grant. Perpetual usage should cost several multiples of the base fee.",
+        "Never sign exclusivity in your niche without a meaningful premium — it blocks future deals.",
+    ],
+    "exposure": [
+        "Exposure doesn't pay invoices: reply warmly but hold a minimum fee, even a small one — it sets the precedent that your work has a price.",
+        "If the brand is genuinely prestigious, negotiate trade value: content rights for your portfolio, a long-term ambassador role, or co-marketing spend.",
+        "Offer a tiny 'first collaboration' rate once, framed as a one-time trial with your full rate attached to the next booking.",
+        "If they decline any payment, decline gracefully — your pipeline should be full of brands that pay.",
+    ],
+    "scope": [
+        "Freeze the scope in writing before you start: list exactly what's included and what costs extra.",
+        "When new asks arrive, reply with enthusiasm plus a quote: 'Love that idea — it's $X on top of the agreed scope.'",
+        "Bundle extra requests into a 'phase two' so the brand feels momentum, not refusal.",
+        "Never deliver out-of-scope work first and ask later — leverage evaporates once the content is handed over.",
+    ],
+    "payment": [
+        "For anything over a small fee, take 50% upfront and 50% on delivery; this alone prevents most problems.",
+        "State your payment terms on the invoice (net-14 is reasonable) and add a gentle late fee clause.",
+        "If a brand pushes net-60 or net-90, offer a small discount for early payment instead of arguing.",
+        "Keep every agreement in writing — a short email confirmation counts as a paper trail.",
+    ],
+}
+
+def ai_negotiate(scenario, details, mk):
+    rng = random.Random(hash((scenario, details, mk["workspace"])) & 0xFFFFFFFF)
+    plays = NEGOTIATE_PLAYBOOK.get(scenario, NEGOTIATE_PLAYBOOK["lowball"])
+    reply = {
+        "lowball": f"Thank you for the offer — I'm genuinely excited about working together. My rate reflects a {mk['engagement']}% engagement rate and a growing audience, so I can't quite match that number. What I can do is shape a package at your budget: fewer deliverables, same quality. Would a trimmed version work, or should we look at next quarter's budget?",
+        "rights": f"Happy to extend rights beyond the standard 30 days. Usage extensions and whitelisting are priced separately from content creation — typically +25–50% depending on duration and channels. Tell me exactly where and how long you'd like to run the content and I'll add a precise line item.",
+        "exposure": f"I really appreciate the offer, and I think my audience of {mk['followers']:,} would respond well to your brand. I do work on a paid basis — my minimum is a modest flat fee that covers production. If budget is tight, I can suggest a reduced package for a first collaboration, with my full rate for anything after.",
+        "scope": f"I love the extra ideas — they'd genuinely make the campaign stronger. To keep things fair, anything beyond our agreed deliverables is quoted separately. Here's what's included in the current scope, and here's what the additions would cost. Happy to bundle them into a phase two.",
+        "payment": f"Thanks for confirming the timeline. My standard terms are 50% upfront and 50% on delivery, with net-14 invoicing. If that's tricky on your side, I can work with a different structure — just let me know what your finance team needs.",
+    }.get(scenario, "")
+    return {"scenario": NEGOTIATE_SCENARIOS.get(scenario, scenario), "playbook": list(plays),
+            "reply_template": reply, "tone": "confident and collaborative"}
+
+@app.post("/api/ai/pitch")
+async def ai_pitch_endpoint(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    brand = (body.get("brand") or "").strip()
+    if not brand:
+        raise HTTPException(400, "Tell me which brand you're pitching")
+    angle = body.get("angle") if body.get("angle") in PITCH_ANGLES else "intro"
+    await asyncio.sleep(random.uniform(1.0, 1.8))
+    mk = await media_kit(user)
+    with closing(db()) as conn:
+        limit, used = charge_credits(conn, user["id"], PITCH_COST)
+        conn.commit()
+    result = ai_pitch(brand, (body.get("contact") or "").strip(), angle, mk)
+    log_activity(user["id"], "ai", f"Brand pitch drafted for “{brand[:48]}”")
+    return {**result, "credits_used": PITCH_COST, "credits_left": limit - used}
+
+@app.post("/api/ai/negotiate")
+async def ai_negotiate_endpoint(request: Request, user=Depends(require_user)):
+    body = await read_json(request)
+    scenario = body.get("scenario") if body.get("scenario") in NEGOTIATE_SCENARIOS else "lowball"
+    await asyncio.sleep(random.uniform(1.0, 1.8))
+    mk = await media_kit(user)
+    with closing(db()) as conn:
+        limit, used = charge_credits(conn, user["id"], NEGOTIATE_COST)
+        conn.commit()
+    result = ai_negotiate(scenario, (body.get("details") or "").strip(), mk)
+    log_activity(user["id"], "ai", f"Negotiation coach: {result['scenario']}")
+    return {**result, "credits_used": NEGOTIATE_COST, "credits_left": limit - used}
 
 # ---- revenue & deals
 

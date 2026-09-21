@@ -205,7 +205,10 @@ ROUTES.mediakit = {
     refreshCurrentList = () => ROUTES.mediakit.render(document.getElementById("page"));
     page.innerHTML = `
       <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-        <button class="btn primary" id="mk-copy">${icon("copy", 15)} Copy as text</button>
+        <button class="btn primary" id="mk-pitch">${icon("rocket", 15)} Draft a pitch email</button>
+        <button class="btn" id="mk-negotiate">${icon("briefcase", 15)} Negotiation coach</button>
+        <span style="flex:1"></span>
+        <button class="btn" id="mk-copy">${icon("copy", 15)} Copy as text</button>
         <button class="btn" id="mk-download">${icon("file", 15)} Download HTML</button>
       </div>
       <div id="mk-preview"><div class="card"><div class="skel skel-block" style="height:380px"></div></div></div>`;
@@ -215,8 +218,101 @@ ROUTES.mediakit = {
     renderMediaKit(mk, rc);
     document.getElementById("mk-copy").onclick = () => copyText(mediaKitText(mk, rc), "Media kit");
     document.getElementById("mk-download").onclick = () => downloadMediaKit(mk, rc);
+    document.getElementById("mk-pitch").onclick = openPitchModal;
+    document.getElementById("mk-negotiate").onclick = openNegotiateModal;
   },
 };
+
+function openPitchModal() {
+  const m = openModal({
+    title: "Draft a pitch email",
+    wide: true,
+    body: `
+      <div class="grid cols-2" style="gap:12px">
+        <div class="field"><label>Brand you're pitching</label><input class="input" id="pt-brand" placeholder="e.g. Brewline Coffee"></div>
+        <div class="field"><label>Contact name (optional)</label><input class="input" id="pt-contact" placeholder="e.g. Sarah"></div>
+      </div>
+      <div class="field"><label>Angle</label><select class="input" id="pt-angle">
+        <option value="intro">Cold introduction</option>
+        <option value="fit">Audience-fit positioning</option>
+        <option value="results">Lead with past results</option>
+        <option value="seasonal">Seasonal / moment tie-in</option>
+      </select></div>
+      <div id="pt-result" style="display:none"></div>`,
+    foot: `<button class="btn" data-close>Close</button><button class="btn primary" id="pt-go">${icon("sparkles", 14)} Draft it (5 credits)</button>`,
+  });
+  m.el.querySelector("#pt-go").onclick = async () => {
+    const brand = m.el.querySelector("#pt-brand").value.trim();
+    if (!brand) { toast("Tell me which brand you're pitching", { type: "info" }); return; }
+    const btn = m.el.querySelector("#pt-go");
+    buttonLoading(btn, true);
+    try {
+      const res = await api("/api/ai/pitch", { method: "POST", body: {
+        brand, contact: m.el.querySelector("#pt-contact").value.trim(),
+        angle: m.el.querySelector("#pt-angle").value } });
+      updateCreditsPill(res.credits_left);
+      const box = m.el.querySelector("#pt-result");
+      box.style.display = "block";
+      box.innerHTML = `
+        <div class="card" style="margin:14px 0 0">
+          <div class="faint" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px">${esc(res.angle)}</div>
+          <div style="margin:8px 0"><b>Subject:</b> ${esc(res.subject)}</div>
+          <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.6;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:14px;margin:0">${esc(res.body)}</pre>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn sm primary" id="pt-copy">${icon("copy", 12)} Copy email</button>
+          </div>
+        </div>`;
+      box.querySelector("#pt-copy").onclick = () => copyText(`Subject: ${res.subject}\n\n${res.body}`, "Pitch email");
+      btn.style.display = "none";
+    } catch (e) { toast(e.message, { type: "error" }); buttonLoading(btn, false); }
+  };
+}
+
+const NEGOTIATE_SCENARIOS = [
+  ["lowball", "They offered below my rate"],
+  ["rights", "They want extra usage rights / whitelisting"],
+  ["exposure", "Offering product or 'exposure' instead of money"],
+  ["scope", "Deliverables keep growing, budget doesn't"],
+  ["payment", "Payment terms or late payment"],
+];
+
+function openNegotiateModal() {
+  const m = openModal({
+    title: "Negotiation coach",
+    wide: true,
+    body: `
+      <div class="field"><label>What's happening?</label><select class="input" id="ng-scenario">
+        ${NEGOTIATE_SCENARIOS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>Extra context (optional)</label><input class="input" id="ng-details" placeholder="e.g. they offered $120 for 3 posts"></div>
+      <div id="ng-result" style="display:none"></div>`,
+    foot: `<button class="btn" data-close>Close</button><button class="btn primary" id="ng-go">${icon("sparkles", 14)} Coach me (5 credits)</button>`,
+  });
+  m.el.querySelector("#ng-go").onclick = async () => {
+    const btn = m.el.querySelector("#ng-go");
+    buttonLoading(btn, true);
+    try {
+      const res = await api("/api/ai/negotiate", { method: "POST", body: {
+        scenario: m.el.querySelector("#ng-scenario").value,
+        details: m.el.querySelector("#ng-details").value.trim() } });
+      updateCreditsPill(res.credits_left);
+      const box = m.el.querySelector("#ng-result");
+      box.style.display = "block";
+      box.innerHTML = `
+        <div class="card" style="margin:14px 0 0">
+          <h3 style="margin-bottom:10px">${icon("award", 15)} Playbook — ${esc(res.scenario)}</h3>
+          <ol style="padding-left:20px;font-size:13px;line-height:1.7;display:flex;flex-direction:column;gap:6px">
+            ${res.playbook.map(p => `<li>${esc(p)}</li>`).join("")}
+          </ol>
+          <div class="faint" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin:16px 0 6px">Ready-to-send reply · tone: ${esc(res.tone)}</div>
+          <pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.6;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:14px;margin:0">${esc(res.reply_template)}</pre>
+          <div style="margin-top:10px"><button class="btn sm primary" id="ng-copy">${icon("copy", 12)} Copy reply</button></div>
+        </div>`;
+      box.querySelector("#ng-copy").onclick = () => copyText(res.reply_template, "Reply");
+      btn.style.display = "none";
+    } catch (e) { toast(e.message, { type: "error" }); buttonLoading(btn, false); }
+  };
+}
 
 function fmtK(n) {
   n = n || 0;
