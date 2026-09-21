@@ -30,7 +30,7 @@ jobs:
           architecture: ${{ matrix.pyarch }}
 
       - name: Install backend deps
-        run: pip install pyinstaller fastapi "uvicorn[standard]"
+        run: pip install pyinstaller fastapi "uvicorn[standard]" httpx python-multipart
 
       - name: Compile backend exe
         run: >
@@ -39,6 +39,7 @@ jobs:
           --add-data "static;static"
           --collect-submodules uvicorn
           --collect-submodules starlette
+          --collect-submodules httpx
           server.py
 
       - name: Smoke test backend (boot + health check)
