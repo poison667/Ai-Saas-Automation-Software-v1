@@ -181,7 +181,7 @@ ROUTES.aiengine = {
               </div>
               <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
                 <button class="btn primary" id="ae-pull">${icon("check", 14)} Download model (llama3.2)</button>
-                ${al.models && al.models.length ? `<select id="ae-pull-model" class="input" style="width:200px">${["llama3.2", "llama3.1:8b", "qwen2.5:7b", "mistral"].map(m => `<option value="${m}">${m}</option>`).join("")}</select>` : ""}
+                ${al.models && al.models.length ? `<select id="ae-pull-model" class="input" style="width:200px">${["hermes3:8b", "qwen3:8b", "hermes3:3b", "qwen3:4b", "llama3.2", "llama3.1:8b", "mistral"].map(m => `<option value="${m}">${m}</option>`).join("")}</select>` : ""}
                 <span id="ae-pull-out" style="font-size:12.5px;color:var(--muted)"></span>
               </div>`}
           </div>` : "";

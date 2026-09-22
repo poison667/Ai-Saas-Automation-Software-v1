@@ -25,7 +25,7 @@ MODELS = {
     "anthropic": ["claude-3-7-sonnet-latest", "claude-3-5-haiku-latest", "claude-sonnet-4-20250514"],
     "gemini": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
     "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
-    "ollama": ["llama3.2", "llama3.1", "mistral", "qwen2.5", "phi3"],
+    "ollama": ["hermes3:8b", "hermes3:3b", "qwen3:8b", "qwen3:4b", "llama3.2", "llama3.1", "mistral", "qwen2.5", "phi3"],
     "custom": [],
     "builtin": [],
 }
@@ -187,7 +187,7 @@ async def probe_ollama(base=DEFAULT_OLLAMA):
         _ollama_cache.update(ts=now, ok=False, models=[])
     return _ollama_cache
 
-PREFERRED_MODELS = ("llama3.2", "llama3.1", "llama3", "qwen2.5", "qwen", "mistral", "gemma", "phi")
+PREFERRED_MODELS = ("hermes3", "qwen3", "qwen2.5", "qwen", "llama3.1", "llama3.2", "llama3", "mistral", "gemma", "phi")
 
 def pick_model(models):
     for needle in PREFERRED_MODELS:
