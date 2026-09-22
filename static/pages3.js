@@ -52,7 +52,7 @@ function renderMultiLine(container, { series, labels }, { fmt = fmtNum } = {}) {
 }
 
 function avatarColor(s) {
-  const palette = ["#8b5cf6", "#22d3ee", "#f472b6", "#34d399", "#fbbf24", "#60a5fa"];
+  const palette = ["#3b82f6", "#22d3ee", "#f59e0b", "#34d399", "#fbbf24", "#60a5fa"];
   let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return palette[h % palette.length];
 }
@@ -235,7 +235,7 @@ function renderConvDetail() {
     try {
       const r = await api(`/api/inbox/${c.id}/ai-reply`, { method: "POST" });
       sg.innerHTML = `<div class="suggest-box">
-        <div class="mb-8" style="font-size:11.5px;font-weight:700;color:#c4b5fd;display:flex;gap:6px;align-items:center">${icon("sparkles", 12)} AI suggestions — click to use</div>
+        <div class="mb-8" style="font-size:11.5px;font-weight:700;color:#93c5fd;display:flex;gap:6px;align-items:center">${icon("sparkles", 12)} AI suggestions — click to use</div>
         ${r.suggestions.map(s => `<div class="sg">${esc(s)}</div>`).join("")}
       </div>`;
       sg.querySelectorAll(".sg").forEach(el => el.onclick = () => {
@@ -518,7 +518,7 @@ function openMediaEditModal(a) {
   };
 }
 
-const DESIGN_PALETTES = [["#8b5cf6", "#d946ef"], ["#0ea5e9", "#22d3ee"], ["#f59e0b", "#fbbf24"], ["#10b981", "#6ee7b7"], ["#ef4444", "#f97316"], ["#334155", "#64748b"]];
+const DESIGN_PALETTES = [["#3b82f6", "#06b6d4"], ["#0ea5e9", "#22d3ee"], ["#f59e0b", "#fbbf24"], ["#10b981", "#6ee7b7"], ["#ef4444", "#f97316"], ["#334155", "#64748b"]];
 const DESIGN_EMOJI = ["🚀", "✨", "🎨", "📈", "🔥", "💡", "🎯", "🧠"];
 
 function openDesignModal() {
@@ -743,7 +743,7 @@ function drawCompetitors(comps, mine) {
   if (!chart || !cards) return;
   document.getElementById("comp-count").textContent = comps.length ? `Tracking ${comps.length} competitor${comps.length === 1 ? "" : "s"}` : "";
   const labels = mine.series.map(x => new Date(x.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }));
-  const series = [{ label: state.user.workspace + " (you)", color: "#8b5cf6", values: mine.series.map(x => x.followers) }];
+  const series = [{ label: state.user.workspace + " (you)", color: "#3b82f6", values: mine.series.map(x => x.followers) }];
   comps.forEach(c => series.push({ label: c.name, color: c.color, values: c.series }));
   renderMultiLine(chart, { series, labels });
   if (!comps.length) {
@@ -756,7 +756,7 @@ function drawCompetitors(comps, mine) {
   }
   const totalAudience = mine.summary.followers + comps.reduce((s, c) => s + c.followers, 0);
   const sov = [
-    { name: state.user.workspace + " (you)", value: mine.summary.followers, color: "#8b5cf6" },
+    { name: state.user.workspace + " (you)", value: mine.summary.followers, color: "#3b82f6" },
     ...comps.map(c => ({ name: c.name, value: c.followers, color: c.color })),
   ].sort((a, b) => b.value - a.value);
   cards.innerHTML = `

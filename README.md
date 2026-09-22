@@ -68,6 +68,10 @@ approval from teammates), 4 campaigns, 9 inbox messages, 4 teammates, 6 media as
 5 invoices, 3 competitors, 3 tracked keywords, 3 weekly reports and 180 days of analytics.
 New registrations start empty to demonstrate every empty state.
 
+## Professional Identity (v3.3)
+
+Full rebrand to a graphite + cobalt/cyan identity — no pink, no violet anywhere: new design tokens, aurora background, app icons, favicon and Electron loader, consistent across light & dark themes.
+
 ## Zero-config Local AI (v3.2)
 
 - **Auto-detection**: if Ollama is running on the computer, Lumina finds it and uses it automatically for every AI feature — no provider picking, no API key, no setup.

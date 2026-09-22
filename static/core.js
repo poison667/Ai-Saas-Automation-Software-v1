@@ -494,7 +494,7 @@ async function loadNotifications() {
     setBellDot(d.unread);
     const items = d.items.slice(0, 6).map(a => `
       <div class="notif-item">
-        <span class="n-ico" style="background:rgba(139,92,246,.13);color:#c4b5fd">${icon(ACT_ICO[a.type] || "zap", 14)}</span>
+        <span class="n-ico" style="background:rgba(59,130,246,.13);color:#93c5fd">${icon(ACT_ICO[a.type] || "zap", 14)}</span>
         <div><p>${esc(a.message)}</p><div class="n-time">${timeAgo(a.created_at)}</div></div>
       </div>`).join("") || `<div class="notif-item"><p class="muted">No notifications yet.</p></div>`;
     menu.innerHTML = `
@@ -837,7 +837,7 @@ function platformPreviewHTML(p, content) {
     <div class="phone-card">
       <div style="display:flex;align-items:center;gap:9px;padding:10px 12px">${ava}
         <b style="font-size:12.5px">${name}</b><span style="margin-left:auto;color:var(--faint)">•••</span></div>
-      <div style="aspect-ratio:1;background:linear-gradient(135deg,rgba(139,92,246,.4),rgba(217,70,239,.35));display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.75)">${icon("image", 40)}</div>
+      <div style="aspect-ratio:1;background:linear-gradient(135deg,rgba(59,130,246,.4),rgba(6,182,212,.35));display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.75)">${icon("image", 40)}</div>
       <div style="padding:10px 12px">
         <div style="display:flex;gap:14px;color:var(--text);margin-bottom:8px">${icon("heart", 20)}${icon("comment", 20)}${icon("send", 20)}</div>
         <div style="font-size:12.5px;line-height:1.55"><b>${name}</b> ${body}</div>

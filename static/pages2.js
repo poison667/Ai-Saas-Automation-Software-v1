@@ -149,7 +149,7 @@ function openAccountModal(account) {
 
 /* ============================================================ CAMPAIGNS */
 const GOALS = ["Awareness", "Engagement", "Conversions", "Leads", "Retention"];
-const CAMP_COLORS = ["#8b5cf6", "#22d3ee", "#f472b6", "#fbbf24", "#34d399", "#60a5fa"];
+const CAMP_COLORS = ["#3b82f6", "#22d3ee", "#f59e0b", "#fbbf24", "#34d399", "#60a5fa"];
 const CAMP_STATUS = { active: ["green", "Active"], paused: ["yellow", "Paused"], draft: ["gray", "Draft"], completed: ["blue", "Completed"] };
 
 ROUTES.campaigns = {
@@ -226,7 +226,7 @@ function renderCampaigns(camps) {
 }
 
 function openCampaignModal(camp) {
-  const c = camp || { name: "", goal: "Awareness", status: "draft", budget: "", spent: "", start_date: "", end_date: "", color: "#8b5cf6" };
+  const c = camp || { name: "", goal: "Awareness", status: "draft", budget: "", spent: "", start_date: "", end_date: "", color: "#3b82f6" };
   const m = openModal({
     title: camp ? "Edit campaign" : "New campaign",
     body: `
@@ -334,8 +334,8 @@ function drawAnalytics(d) {
   const stats = [
     { label: "Total reach", value: fmtNum(s.reach), delta: dl.reach, ico: "eye", color: "#60a5fa", bg: "rgba(96,165,250,.13)" },
     { label: "Impressions", value: fmtNum(s.impressions), delta: null, ico: "globe", color: "#22d3ee", bg: "rgba(34,211,238,.12)" },
-    { label: "Engagement rate", value: s.engagement + "%", delta: dl.engagement, suffix: "pt", ico: "heart", color: "#f472b6", bg: "rgba(244,114,182,.13)" },
-    { label: "Followers", value: fmtNum(s.followers), delta: dl.followers, suffix: "", ico: "users", color: "#c4b5fd", bg: "rgba(139,92,246,.14)" },
+    { label: "Engagement rate", value: s.engagement + "%", delta: dl.engagement, suffix: "pt", ico: "heart", color: "#f59e0b", bg: "rgba(245,158,11,.13)" },
+    { label: "Followers", value: fmtNum(s.followers), delta: dl.followers, suffix: "", ico: "users", color: "#93c5fd", bg: "rgba(59,130,246,.14)" },
   ];
   document.getElementById("an-body").querySelector(".grid").innerHTML = stats.map(st => `
     <div class="card stat-card fade-in">
@@ -349,7 +349,7 @@ function drawAnalytics(d) {
     d.series.map(x => ({ label: new Date(x.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }), value: x.reach })),
     { label: "reach", color: "#60a5fa" });
   renderBars(document.getElementById("an-bars"),
-    d.platforms.map(p => ({ label: PLATFORMS[p.platform]?.name || p.platform, value: p.engagement, color: PLATFORMS[p.platform]?.color || "#8b5cf6" })),
+    d.platforms.map(p => ({ label: PLATFORMS[p.platform]?.name || p.platform, value: p.engagement, color: PLATFORMS[p.platform]?.color || "#3b82f6" })),
     { fmt: v => v, suffix: "%" });
   renderDonut(document.getElementById("an-donut"),
     d.platforms.map(p => ({ platform: p.platform, value: p.followers, color: PLATFORMS[p.platform]?.color || "#666" })),
@@ -509,7 +509,7 @@ ROUTES.settings = {
         <div class="stack">
           <div class="card">
             <h3>Plan & usage</h3>
-            <div class="card-sub">You're on the <b style="color:#c4b5fd">${esc(u.plan)}</b> plan.</div>
+            <div class="card-sub">You're on the <b style="color:#93c5fd">${esc(u.plan)}</b> plan.</div>
             <div id="set-usage">${skeletonTable(2)}</div>
             <button class="btn block mt-16" id="set-upgrade">${icon("zap", 14)} Upgrade to Scale</button>
           </div>

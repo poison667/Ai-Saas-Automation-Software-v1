@@ -24,7 +24,7 @@ function revenueBars(months) {
   }).join("");
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;display:block">
     <defs><linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#d946ef"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs>
+      <stop offset="0%" stop-color="#06b6d4"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
     ${bars}</svg>`;
 }
 
@@ -68,7 +68,7 @@ ROUTES.revenue = {
 function renderRevenue(deals, s) {
   const stats = [
     { label: "Won this month", value: fmtMoney(s.won_month), ico: "dollar", color: "#34d399", bg: "rgba(52,211,153,.12)", sub: `${fmtMoney(s.won_year)} year to date` },
-    { label: "Pipeline value", value: fmtMoney(s.pipeline), ico: "briefcase", color: "#c4b5fd", bg: "rgba(139,92,246,.14)", sub: `${s.open} open deal${s.open === 1 ? "" : "s"}` },
+    { label: "Pipeline value", value: fmtMoney(s.pipeline), ico: "briefcase", color: "#93c5fd", bg: "rgba(59,130,246,.14)", sub: `${s.open} open deal${s.open === 1 ? "" : "s"}` },
     { label: "Win rate", value: s.win_rate + "%", ico: "award", color: "#93c5fd", bg: "rgba(96,165,250,.13)", sub: "won vs closed deals" },
     { label: "Avg deal size", value: fmtMoney(s.avg_deal), ico: "trendUp", color: "#fcd34d", bg: "rgba(251,191,36,.12)", sub: "across won deals" },
   ];
@@ -340,7 +340,7 @@ function renderMediaKit(mk, rc) {
     ["Reach · 30 days", fmtK(mk.reach30)], ["Audience growth", (mk.growth >= 0 ? "+" : "") + mk.growth + "%"],
   ];
   el.innerHTML = `
-  <div class="card fade-in" style="max-width:760px;margin:0 auto;border-color:rgba(139,92,246,.4)">
+  <div class="card fade-in" style="max-width:760px;margin:0 auto;border-color:rgba(59,130,246,.4)">
     <div style="text-align:center;padding:10px 0 18px;border-bottom:1px solid var(--border)">
       <div style="width:64px;height:64px;border-radius:18px;background:var(--grad);display:inline-flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff">${esc(mk.workspace.charAt(0))}</div>
       <h2 style="margin:10px 0 2px" class="grad-text">${esc(mk.workspace)}</h2>
@@ -384,13 +384,13 @@ function downloadMediaKit(mk, rc) {
       <div class="row"><b>${PLATFORMS[p.platform]?.name || p.platform}</b> — ${p.handle} · ${p.followers.toLocaleString()} followers · ${p.engagement}% engagement</div>`).join("");
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(mk.workspace)} — Media Kit</title>
 <style>body{font-family:Segoe UI,Arial,sans-serif;background:#0a0c12;color:#e8eaf2;max-width:720px;margin:32px auto;padding:0 20px}
-h1{background:linear-gradient(90deg,#8b5cf6,#d946ef);-webkit-background-clip:text;background-clip:text;color:transparent;margin:8px 0 2px}
+h1{background:linear-gradient(90deg,#3b82f6,#06b6d4);-webkit-background-clip:text;background-clip:text;color:transparent;margin:8px 0 2px}
 .sub{color:#9aa1b5;font-size:13px}.stats{display:flex;gap:12px;margin:22px 0;flex-wrap:wrap}
 .stat{flex:1;min-width:140px;background:#11141d;border:1px solid #232736;border-radius:12px;padding:14px;text-align:center}
 .stat b{font-size:20px;display:block}.stat span{color:#9aa1b5;font-size:11px}
 h2{font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#9aa1b5;border-bottom:1px solid #232736;padding-bottom:6px}
 table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:8px 10px;border-bottom:1px solid #232736;text-align:left}
-.row{padding:6px 0;font-size:14px}.badges span{display:inline-block;background:#8b5cf622;border:1px solid #8b5cf666;color:#c4b5fd;border-radius:20px;padding:4px 12px;margin:4px 6px 0 0;font-size:12px}
+.row{padding:6px 0;font-size:14px}.badges span{display:inline-block;background:#3b82f622;border:1px solid #3b82f666;color:#93c5fd;border-radius:20px;padding:4px 12px;margin:4px 6px 0 0;font-size:12px}
 .foot{color:#6b7280;font-size:11px;margin-top:26px}</style></head><body>
 <h1>${esc(mk.workspace)}</h1>
 <div class="sub">Creator media kit · ${mk.followers.toLocaleString()} followers · ${mk.engagement}% engagement · ${fmtK(mk.reach30)} reach in the last 30 days</div>
@@ -434,7 +434,7 @@ async function openRateCardModal() {
   });
   text += rc.notes.map(n => "• " + n).join("\n");
   m.el.querySelector("#rc-body").innerHTML = `
-    <div class="card" style="margin:0;border-color:rgba(139,92,246,.45)">
+    <div class="card" style="margin:0;border-color:rgba(59,130,246,.45)">
       <div style="text-align:center;margin-bottom:14px">
         <b style="font-size:17px" class="grad-text">${esc(rc.workspace)}</b>
         <div class="faint" style="font-size:12px;margin-top:3px">${rc.followers.toLocaleString()} followers · ${rc.engagement}% engagement · value multiplier ×${rc.engagement_multiplier}</div>

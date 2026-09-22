@@ -193,7 +193,7 @@ ROUTES.aiengine = {
             <div class="card-sub">Local options are completely free and never leave your computer.</div>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:12px">
               ${AI_PROVIDERS.map(pr => `
-                <button class="prov-card ${p === pr.id ? "sel" : ""}" data-prov="${pr.id}" style="text-align:left;padding:14px;border-radius:12px;border:1px solid ${p === pr.id ? "var(--accent)" : "var(--border)"};background:${p === pr.id ? "rgba(139,92,246,.10)" : "var(--panel-2)"};cursor:pointer">
+                <button class="prov-card ${p === pr.id ? "sel" : ""}" data-prov="${pr.id}" style="text-align:left;padding:14px;border-radius:12px;border:1px solid ${p === pr.id ? "var(--accent)" : "var(--border)"};background:${p === pr.id ? "rgba(59,130,246,.10)" : "var(--panel-2)"};cursor:pointer">
                   <div style="font-weight:600;font-size:13.5px;display:flex;justify-content:space-between">${esc(pr.name)}${pr.free ? `<span class="pill ok" style="font-size:10px">FREE</span>` : ""}</div>
                   <div style="font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5">${esc(pr.desc)}</div>
                 </button>`).join("")}
@@ -451,7 +451,7 @@ ROUTES.imagestudio = {
               <h3>2 · Pick the resolution</h3>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
                 ${IMG_PRESETS.map(p => `
-                  <button class="rp ${sel.preset === p.id ? "sel" : ""}" data-id="${p.id}" style="text-align:left;padding:10px 12px;border-radius:10px;border:1px solid ${sel.preset === p.id ? "var(--accent)" : "var(--border)"};background:${sel.preset === p.id ? "rgba(139,92,246,.10)" : "var(--panel-2)"};cursor:pointer">
+                  <button class="rp ${sel.preset === p.id ? "sel" : ""}" data-id="${p.id}" style="text-align:left;padding:10px 12px;border-radius:10px;border:1px solid ${sel.preset === p.id ? "var(--accent)" : "var(--border)"};background:${sel.preset === p.id ? "rgba(59,130,246,.10)" : "var(--panel-2)"};cursor:pointer">
                     <div style="font-weight:600;font-size:12.5px">${p.label}</div>
                     <div style="font-size:11px;color:var(--muted)">${p.w ? p.w + "×" + p.h : "you decide"} · ${p.hint}</div>
                   </button>`).join("")}

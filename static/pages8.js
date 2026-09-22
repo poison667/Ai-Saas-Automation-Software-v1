@@ -201,7 +201,7 @@ function renderCarousel(r) {
       <div class="card-sub">Design each slide in your favorite tool — text is ready below.</div>
       <div class="grid cols-2" style="gap:12px">
       ${r.slides.map(s => `
-        <div class="card" style="margin:0;${s.type === "cover" ? "border-color:rgba(139,92,246,.5)" : s.type === "cta" ? "border-color:rgba(34,211,238,.4)" : ""}">
+        <div class="card" style="margin:0;${s.type === "cover" ? "border-color:rgba(59,130,246,.5)" : s.type === "cta" ? "border-color:rgba(34,211,238,.4)" : ""}">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span class="badge ${s.type === "cover" ? "purple" : s.type === "cta" ? "cyan" : "gray"}">Slide ${s.n} · ${s.type}</span>
             <span style="margin-left:auto"><button class="btn sm" data-sc="${s.n}">${icon("copy", 12)}</button></span>

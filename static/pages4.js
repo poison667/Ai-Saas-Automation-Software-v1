@@ -188,14 +188,14 @@ ROUTES.audience = {
       heat += `<div style="font-size:10.5px;color:var(--muted);font-weight:700;display:flex;align-items:center">${days[di]}</div>`;
       row.forEach((v, h) => {
         heat += `<div title="${days[di]} ${String(h).padStart(2, "0")}:00 — activity ${v}/100"
-          style="aspect-ratio:1;border-radius:3px;background:rgba(139,92,246,${(0.05 + (v / 100) * 0.85).toFixed(2)});min-height:13px"></div>`;
+          style="aspect-ratio:1;border-radius:3px;background:rgba(59,130,246,${(0.05 + (v / 100) * 0.85).toFixed(2)});min-height:13px"></div>`;
       });
     });
     heat += `</div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:11px;color:var(--faint)">
-        Less <span style="width:12px;height:12px;border-radius:3px;background:rgba(139,92,246,.1)"></span>
-        <span style="width:12px;height:12px;border-radius:3px;background:rgba(139,92,246,.4)"></span>
-        <span style="width:12px;height:12px;border-radius:3px;background:rgba(139,92,246,.75)"></span> More
+        Less <span style="width:12px;height:12px;border-radius:3px;background:rgba(59,130,246,.1)"></span>
+        <span style="width:12px;height:12px;border-radius:3px;background:rgba(59,130,246,.4)"></span>
+        <span style="width:12px;height:12px;border-radius:3px;background:rgba(59,130,246,.75)"></span> More
       </div>`;
     document.getElementById("aud-heat").innerHTML = heat;
   },
@@ -259,7 +259,7 @@ function renderReports(reports) {
   body.innerHTML = `<div class="grid cols-3">${reports.map(r => `
     <div class="card fade-in" data-id="${r.id}" style="cursor:pointer">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:9px">
-        <span class="li-ico" style="background:rgba(139,92,246,.13);color:#c4b5fd;width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center">${icon("file", 17)}</span>
+        <span class="li-ico" style="background:rgba(59,130,246,.13);color:#93c5fd;width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center">${icon("file", 17)}</span>
         <button class="icon-btn danger" data-act="del" title="Delete report">${icon("trash", 14)}</button>
       </div>
       <h4 style="font-size:14px;margin-bottom:3px">${esc(r.title)}</h4>

@@ -42,8 +42,8 @@ ROUTES.notifications = {
       list.innerHTML = shown.map(n => {
         const unread = !lastSeen || n.created_at > lastSeen;
         return `
-        <div class="list-item" style="${unread ? "background:rgba(139,92,246,.05);border-radius:10px;padding-left:10px;padding-right:10px" : ""}">
-          <span class="li-ico" style="background:rgba(139,92,246,.12);color:#c4b5fd">${icon(ACT_ICO[n.type] || "zap", 16)}</span>
+        <div class="list-item" style="${unread ? "background:rgba(59,130,246,.05);border-radius:10px;padding-left:10px;padding-right:10px" : ""}">
+          <span class="li-ico" style="background:rgba(59,130,246,.12);color:#93c5fd">${icon(ACT_ICO[n.type] || "zap", 16)}</span>
           <div class="li-main"><b style="white-space:normal;font-weight:${unread ? 700 : 500}">${esc(n.message)}</b></div>
           <div class="li-side">
             ${unread ? `<span class="badge purple" style="margin-bottom:4px">new</span><br>` : ""}

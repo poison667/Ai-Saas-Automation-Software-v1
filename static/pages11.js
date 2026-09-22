@@ -103,7 +103,7 @@ function openInvoiceView(inv) {
     title: `Invoice ${esc(inv.number)}`,
     wide: true,
     body: `
-      <div class="card" style="margin:0;border-color:rgba(139,92,246,.4)">
+      <div class="card" style="margin:0;border-color:rgba(59,130,246,.4)">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
           <div><b style="font-size:18px" class="grad-text">${esc(inv.number)}</b>
             <div class="faint" style="font-size:12px;margin-top:2px">Bill to: <b>${esc(inv.client)}</b></div></div>
@@ -131,10 +131,10 @@ function downloadInvoiceHTML(inv) {
     <tr><td>${esc(it.description)}</td><td class="amt">${inv.currency}${Number(it.amount).toLocaleString()}</td></tr>`).join("");
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(inv.number)}</title>
 <style>body{font-family:Segoe UI,Arial,sans-serif;background:#0a0c12;color:#e8eaf2;max-width:720px;margin:36px auto;padding:0 22px}
-h1{background:linear-gradient(90deg,#8b5cf6,#d946ef);-webkit-background-clip:text;background-clip:text;color:transparent;margin:4px 0}
+h1{background:linear-gradient(90deg,#3b82f6,#06b6d4);-webkit-background-clip:text;background-clip:text;color:transparent;margin:4px 0}
 .meta{color:#9aa1b5;font-size:13px;margin-bottom:20px}
 table{width:100%;border-collapse:collapse;font-size:14px}td{padding:10px;border-bottom:1px solid #232736}
-.amt{text-align:right;white-space:nowrap}.total td{font-weight:800;font-size:16px;border-top:2px solid #8b5cf6}
+.amt{text-align:right;white-space:nowrap}.total td{font-weight:800;font-size:16px;border-top:2px solid #3b82f6}
 .notes{color:#9aa1b5;font-size:12.5px;margin-top:18px;line-height:1.6}.foot{color:#6b7280;font-size:11px;margin-top:30px}</style></head><body>
 <h1>INVOICE ${esc(inv.number)}</h1>
 <div class="meta">Bill to: <b>${esc(inv.client)}</b><br>Issued ${inv.issue_date} · Due ${inv.due_date} · Status: ${inv.status}</div>

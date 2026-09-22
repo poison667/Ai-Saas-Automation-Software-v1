@@ -2,7 +2,7 @@
 "use strict";
 
 /* ---------------- chart helpers ---------------- */
-function sparkline(values, w = 120, h = 36, color = "#8b5cf6") {
+function sparkline(values, w = 120, h = 36, color = "#3b82f6") {
   if (!values || values.length < 2) return "";
   const min = Math.min(...values), max = Math.max(...values);
   const span = max - min || 1;
@@ -22,7 +22,7 @@ function smoothPath(pts) {
   return d;
 }
 
-function renderAreaChart(container, data, { color = "#8b5cf6", label = "Value", fmt = fmtNum } = {}) {
+function renderAreaChart(container, data, { color = "#3b82f6", label = "Value", fmt = fmtNum } = {}) {
   const W = 760, H = 240, PL = 44, PR = 12, PT = 14, PB = 26;
   if (!data || data.length < 2) {
     container.innerHTML = `<div class="empty" style="padding:30px"><p class="muted">Not enough data yet.</p></div>`;
@@ -130,7 +130,7 @@ ROUTES.dashboard = {
     let onb = null;
     try { onb = await api("/api/onboarding"); } catch (e) {}
     const onbHTML = onb && onb.done < onb.total ? `
-      <div class="card fade-in" style="margin-bottom:16px;border-color:rgba(139,92,246,.4)">
+      <div class="card fade-in" style="margin-bottom:16px;border-color:rgba(59,130,246,.4)">
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
           <div style="flex:1;min-width:220px">
             <h3 style="display:flex;align-items:center;gap:8px">${icon("zap", 15)} Set up your workspace <span class="badge purple">${onb.done}/${onb.total}</span></h3>
@@ -170,9 +170,9 @@ ROUTES.dashboard = {
     const reachVals = d.series.map(x => x.reach);
     const engVals = d.series.map(x => x.engagement);
     const stats = [
-      { label: "Total followers", value: fmtNum(s.followers), ico: "users", bg: "rgba(139,92,246,.14)", color: "#c4b5fd", spark: d.series.map(x => x.followers), sc: "#8b5cf6", sub: `${s.connected_accounts} accounts connected` },
+      { label: "Total followers", value: fmtNum(s.followers), ico: "users", bg: "rgba(59,130,246,.14)", color: "#93c5fd", spark: d.series.map(x => x.followers), sc: "#3b82f6", sub: `${s.connected_accounts} accounts connected` },
       { label: "Reach (30d)", value: fmtNum(s.reach30), ico: "eye", bg: "rgba(96,165,250,.13)", color: "#93c5fd", spark: reachVals, sc: "#60a5fa", sub: `${fmtNum(s.reach30 / 30)}/day average` },
-      { label: "Engagement rate", value: s.engagement + "%", ico: "heart", bg: "rgba(244,114,182,.13)", color: "#f9a8d4", spark: engVals, sc: "#f472b6", sub: "likes + comments + shares" },
+      { label: "Engagement rate", value: s.engagement + "%", ico: "heart", bg: "rgba(245,158,11,.13)", color: "#fcd34d", spark: engVals, sc: "#f59e0b", sub: "likes + comments + shares" },
       { label: "Scheduled posts", value: s.scheduled, ico: "clock", bg: "rgba(251,191,36,.12)", color: "#fcd34d", sub: `${s.active_campaigns} active campaign${s.active_campaigns === 1 ? "" : "s"}` },
     ];
     document.getElementById("dash-stats").innerHTML = stats.map(st => `
@@ -196,7 +196,7 @@ ROUTES.dashboard = {
     document.getElementById("dash-activity").innerHTML = d.activity.length
       ? d.activity.slice(0, 6).map(a => `
         <div class="list-item">
-          <span class="li-ico" style="background:rgba(139,92,246,.12);color:#c4b5fd">${icon(actIco[a.type] || "zap", 15)}</span>
+          <span class="li-ico" style="background:rgba(59,130,246,.12);color:#93c5fd">${icon(actIco[a.type] || "zap", 15)}</span>
           <div class="li-main"><b style="white-space:normal">${esc(a.message)}</b></div>
           <div class="li-side"><span style="font-size:11px;color:var(--faint)">${timeAgo(a.created_at)}</span></div>
         </div>`).join("")
@@ -310,7 +310,7 @@ function renderHeatmap(h) {
   const box = document.getElementById("dash-heat");
   if (!box) return;
   const days = Object.entries(h.days); // ["2026-07-01", n] ascending
-  const shade = n => n === 0 ? "var(--panel-3)" : n === 1 ? "rgba(139,92,246,.35)" : n === 2 ? "rgba(139,92,246,.6)" : n === 3 ? "rgba(139,92,246,.85)" : "#d946ef";
+  const shade = n => n === 0 ? "var(--panel-3)" : n === 1 ? "rgba(59,130,246,.35)" : n === 2 ? "rgba(59,130,246,.6)" : n === 3 ? "rgba(59,130,246,.85)" : "#06b6d4";
   const cells = days.map(([date, n]) =>
     `<div title="${date}: ${n} post${n === 1 ? "" : "s"}" style="width:11px;height:11px;border-radius:2.5px;background:${shade(n)}"></div>`).join("");
   box.innerHTML = `
@@ -524,7 +524,7 @@ ROUTES.generator = {
         const gens = await api("/api/generations");
         box.innerHTML = gens.length ? gens.map(g => `
           <div class="list-item" style="cursor:pointer" data-gen="${g.id}">
-            <span class="li-ico" style="background:rgba(217,70,239,.12);color:#f0abfc">${icon("sparkles", 15)}</span>
+            <span class="li-ico" style="background:rgba(6,182,212,.12);color:#67e8f9">${icon("sparkles", 15)}</span>
             <div class="li-main"><b>${esc(g.topic)}</b><span>${esc(g.tone)} · ${platRow(g.platforms, 10)}</span></div>
             <div class="li-side"><span style="font-size:11px;color:var(--faint)">${timeAgo(g.created_at)}</span></div>
           </div>`).join("")

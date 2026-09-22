@@ -33,7 +33,7 @@ ROUTES.services = {
         <div id="sv-table">${skeletonTable(8)}</div>
       </div>
       <div id="sv-bar" style="position:sticky;bottom:14px;display:none">
-        <div class="card" style="display:flex;align-items:center;gap:12px;box-shadow:0 10px 30px rgba(0,0,0,.45);border-color:rgba(139,92,246,.5)">
+        <div class="card" style="display:flex;align-items:center;gap:12px;box-shadow:0 10px 30px rgba(0,0,0,.45);border-color:rgba(59,130,246,.5)">
           <b id="sv-bar-count" style="font-size:13.5px"></b>
           <span class="muted" style="font-size:12.5px">services selected</span>
           <span style="flex:1"></span>
@@ -97,7 +97,7 @@ function renderSvcTable() {
     </tr></thead><tbody>
     ${rows.map(it => {
       const sel = SVC_STATE.selected.has(it.id);
-      return `<tr data-svc="${it.id}" style="${sel ? "background:rgba(139,92,246,.08)" : ""}">
+      return `<tr data-svc="${it.id}" style="${sel ? "background:rgba(59,130,246,.08)" : ""}">
         <td><input type="checkbox" data-check ${sel ? "checked" : ""} style="width:16px;height:16px;cursor:pointer"></td>
         <td><b>${esc(it.service)}</b><br><span class="faint" style="font-size:11px">AI: ${esc(it.ai)}</span></td>
         <td><span class="badge ${CAT_COLORS[it.category] || "gray"}" style="white-space:nowrap">${esc(it.platform)}</span></td>
@@ -114,7 +114,7 @@ function renderSvcTable() {
     cb.onchange = () => {
       if (cb.checked) SVC_STATE.selected.set(id, { price: SVC_STATE.selected.get(id)?.price ?? "" });
       else SVC_STATE.selected.delete(id);
-      tr.style.background = cb.checked ? "rgba(139,92,246,.08)" : "";
+      tr.style.background = cb.checked ? "rgba(59,130,246,.08)" : "";
       updateSvcBar();
     };
   });
@@ -195,7 +195,7 @@ function downloadProposalHTML(res) {
     <td class="price">${l.price}</td></tr>`).join("");
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Proposal — ${esc(res.client)}</title>
 <style>body{font-family:Segoe UI,Arial,sans-serif;background:#0a0c12;color:#e8eaf2;max-width:820px;margin:32px auto;padding:0 22px}
-h1{background:linear-gradient(90deg,#8b5cf6,#d946ef);-webkit-background-clip:text;background-clip:text;color:transparent;margin:6px 0 2px}
+h1{background:linear-gradient(90deg,#3b82f6,#06b6d4);-webkit-background-clip:text;background-clip:text;color:transparent;margin:6px 0 2px}
 .sub{color:#9aa1b5;font-size:12px}.head{margin-bottom:18px}
 table{width:100%;border-collapse:collapse;font-size:13.5px}td,th{padding:10px;border-bottom:1px solid #232736;text-align:left;vertical-align:top}
 th{color:#9aa1b5;font-size:11px;text-transform:uppercase;letter-spacing:.6px}.price{font-weight:700;white-space:nowrap}

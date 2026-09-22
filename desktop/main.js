@@ -94,10 +94,10 @@ const SPLASH = "data:text/html;charset=utf-8," + encodeURIComponent(`<!doctype h
 <html><head><style>
   html,body{margin:0;height:100%;background:#0a0c12;display:flex;align-items:center;justify-content:center;
     font-family:system-ui,Segoe UI,sans-serif;color:#e6e8f2;flex-direction:column;gap:16px}
-  .logo{width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#8b5cf6,#d946ef);
-    display:flex;align-items:center;justify-content:center;font-size:30px;box-shadow:0 10px 40px rgba(139,92,246,.45)}
+  .logo{width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#3b82f6,#06b6d4);
+    display:flex;align-items:center;justify-content:center;font-size:30px;box-shadow:0 10px 40px rgba(59,130,246,.45)}
   .bar{width:210px;height:5px;border-radius:99px;background:#1c2130;overflow:hidden}
-  .bar i{display:block;height:100%;width:40%;border-radius:99px;background:linear-gradient(90deg,#8b5cf6,#22d3ee);
+  .bar i{display:block;height:100%;width:40%;border-radius:99px;background:linear-gradient(90deg,#3b82f6,#22d3ee);
     animation:slide 1.1s ease-in-out infinite alternate}
   @keyframes slide{from{margin-left:-40%}to{margin-left:100%}}
   p{color:#8b93a7;font-size:13px;margin:0}
